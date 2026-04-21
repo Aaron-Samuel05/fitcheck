@@ -1,0 +1,117 @@
+{
+  "theme": "dark",
+  "archetype": "2 (The Performance Pro)",
+  "brand": {
+    "name": "FitCheck",
+    "vibe": "High-end, precise, athletic, Vercel-meets-Apple-Fitness"
+  },
+  "colors": {
+    "background": {
+      "primary": "#000000",
+      "secondary": "#0A0A0A",
+      "surface": "#121212"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "muted": "#71717A"
+    },
+    "accent": {
+      "primary": "#39FF14",
+      "hover": "#32E612",
+      "glow": "rgba(57, 255, 20, 0.4)"
+    },
+    "border": {
+      "default": "#27272A",
+      "hover": "rgba(57, 255, 20, 0.5)"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Outfit",
+      "body": "Manrope"
+    },
+    "scales": {
+      "h1": "text-5xl md:text-6xl lg:text-7xl font-semibold tracking-tighter",
+      "h2": "text-3xl md:text-4xl font-semibold tracking-tight",
+      "h3": "text-xl md:text-2xl font-medium tracking-tight",
+      "body": "text-base md:text-lg text-zinc-400 leading-relaxed",
+      "small": "text-sm text-zinc-500 tracking-wide uppercase"
+    }
+  },
+  "layout_and_spacing": {
+    "container": "max-w-7xl mx-auto px-6 md:px-12",
+    "section_gap": "py-24 md:py-32",
+    "hero": {
+      "alignment": "center",
+      "spacing": "pt-32 pb-24 flex flex-col items-center text-center gap-8"
+    },
+    "features_grid": {
+      "mode": "bento",
+      "columns": "grid-cols-1 md:grid-cols-3",
+      "gap": "gap-6 md:gap-8"
+    }
+  },
+  "components": {
+    "header": {
+      "style": "fixed top-0 w-full z-50 backdrop-blur-xl bg-black/50 border-b border-zinc-900",
+      "layout": "flex justify-between items-center h-16 px-6 max-w-7xl mx-auto"
+    },
+    "buttons": {
+      "primary": "bg-[#39FF14] text-black font-semibold px-6 py-3 rounded-full hover:bg-[#32E612] transition-all duration-300 shadow-[0_0_20px_rgba(57,255,20,0.2)] hover:shadow-[0_0_30px_rgba(57,255,20,0.4)] hover:-translate-y-0.5",
+      "secondary": "bg-transparent text-white font-medium px-4 py-2 rounded-full hover:bg-zinc-900 transition-colors border border-transparent hover:border-zinc-800"
+    },
+    "feature_card": {
+      "container": "bg-[#0A0A0A] border border-zinc-800 rounded-2xl p-8 relative overflow-hidden group transition-all duration-500 hover:border-[#39FF14]/50",
+      "glow_effect": "absolute inset-0 bg-gradient-to-br from-[#39FF14]/0 to-[#39FF14]/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500",
+      "icon_wrapper": "w-12 h-12 rounded-xl bg-zinc-900 flex items-center justify-center border border-zinc-800 mb-6 text-[#39FF14] group-hover:scale-110 transition-transform duration-500"
+    },
+    "modals": {
+      "overlay": "fixed inset-0 bg-black/80 backdrop-blur-sm z-50",
+      "container": "bg-[#0A0A0A] border border-zinc-800 rounded-2xl w-full max-w-md p-8 relative shadow-2xl shadow-black"
+    },
+    "forms": {
+      "input": "w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-[#39FF14] focus:border-[#39FF14] transition-all",
+      "label": "block text-sm font-medium text-zinc-400 mb-2"
+    }
+  },
+  "motion_and_interactions": {
+    "hover_states": "All interactive elements must have clear hover states. Buttons lift slightly (-translate-y-0.5) with enhanced glow.",
+    "entrances": "Use Framer Motion to fade in and slide up (y: 20 -> 0) hero elements and feature cards on mount, with staggered delays.",
+    "focus_states": "Form inputs must have a 1px solid neon green border and a subtle ring on focus."
+  },
+  "media": {
+    "images": [
+      {
+        "category": "hero_background_texture",
+        "url": "https://images.unsplash.com/photo-1770513649465-2c60c8039806",
+        "description": "Dark gym interior. USE ONLY AS A VERY FAINT BACKGROUND LAYER (opacity-10 or 20, blend-mode: luminosity or mask-image fading out) behind the hero text to give it an athletic texture without overpowering the Vercel-style clean UI."
+      },
+      {
+        "category": "feature_accent",
+        "url": "https://images.unsplash.com/photo-1637430308606-86576d8fef3c",
+        "description": "Row of exercise machines. Can be used inside a feature card if needed to show environment, heavily masked or grayscale."
+      }
+    ]
+  },
+  "icons": {
+    "library": "lucide-react",
+    "recommended": {
+      "log_workouts": "Activity, Dumbbell, Calendar",
+      "track_progress": "TrendingUp, LineChart, Target",
+      "custom_plans": "ClipboardList, Sliders, Zap"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Install the required fonts: `yarn add @fontsource/outfit @fontsource/manrope` and configure them in tailwind.config.js.",
+    "Implement the landing page with three main sections: Hero, Features (3 columns), and Footer.",
+    "Ensure the Header has a 'FitCheck' text logo and a Login/Signup CTA.",
+    "The Hero must be text-heavy, centered, massive typography, very clean. No large bright images. Use a subtle radial gradient behind the text or the heavily muted gym texture provided in media.",
+    "Create reusable Shadcn-inspired UI components for the Modals and Forms but heavily customize them with pure black backgrounds, zinc-800 borders, and neon green focus rings.",
+    "The Features section must use the 'Bento' or tight grid protocol. Each card must have a glowing hover effect (`hover:border-[#39FF14]/50`).",
+    "All text must strictly adhere to the high contrast requirements against the black background.",
+    "Add `data-testid` to all CTAs, form inputs, and buttons.",
+    "For the Signup/Login modals, use a controlled state to render them over the UI with a `backdrop-blur-sm bg-black/80` overlay.",
+    "Do NOT use Inter font. Do NOT use standard Shadcn borders without customizing to the dark neon aesthetic."
+  ]
+}
