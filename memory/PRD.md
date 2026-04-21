@@ -1,47 +1,54 @@
 # FitCheck — Product Requirements Document
 
 ## Original problem statement
-Create a modern, dark-mode landing page for a new fitness tracking and workout planner web app. Use a color palette of deep charcoal, neon green accents, and white text. Hero section with bold headline, subheadline, and a prominent 'Get Started Free' button. Below the hero, a Features section with a 3-column grid of cards (Log Workouts, Track Progress, Custom Plans) with sleek icons. Clean footer at the bottom. Highly polished minimalist Tailwind design similar to Stripe/Vercel with inspiration from Apple Fitness.
+Dark-mode landing page for a fitness tracking + workout planner (FitCheck). Deep charcoal + neon green (#39FF14) + white. Hero + 3-column Features + Footer. Stripe/Vercel polish with Apple Fitness inspiration.
 
-## User choices (explicit)
-- Brand name: **FitCheck**
-- 'Get Started Free' → **simple signup form (email + password) stored in MongoDB**
-- Sections: **keep it minimal (Hero + Features + Footer only)**
+## User iterations
+1. Build landing page with FitCheck brand, email/password signup stored in MongoDB, minimal sections only.
+2. Add Contact Us (GitHub https://github.com/Aaron-Samuel05 + Instagram https://www.instagram.com/aaron_samuel05/), Premium AI Buddy subscription, more animations, make every button functional.
+3. Email aaronsamuel0205@gmail.com, add Google sign-in/sign-up, make the site user-ready.
 
 ## User personas
-- **Fitness enthusiast** — wants a clean, distraction-free place to log sets/reps and see progress trends.
-- **Coached athlete / program follower** — wants custom/adaptive plans and concrete weekly signal on progress.
-- **Busy professional** — values speed: low-friction logging, mobile-ready, Apple Fitness-level polish.
+- Fitness enthusiast — low-friction logging, clean progress trends.
+- Coached athlete — adaptive plans + weekly signal.
+- Busy professional — mobile-ready, Apple Fitness polish.
 
 ## Architecture
-- **Frontend:** React 19 + React Router, Tailwind (dark), framer-motion, lucide-react icons, sonner toasts. Fonts: Outfit (headings) + Manrope (body).
-- **Backend:** FastAPI, bcrypt + PyJWT (HS256) auth in httpOnly cookies (`access_token` 15m, `refresh_token` 7d), MongoDB via motor.
-- **DB:** `users` collection with unique index on `email`. UUID string `id` field (not `_id`).
+- **Frontend:** React 19 + React Router, Tailwind (dark), framer-motion, lucide-react, sonner. Fonts: Outfit + Manrope. AuthUIContext for shared signup/login modal, PaymentReturnHandler for Stripe redirect polling, GoogleCallbackHandler for Emergent OAuth hash exchange.
+- **Backend:** FastAPI + motor (async MongoDB). Auth: bcrypt + JWT (HS256) httpOnly cookies (access_token 15m, refresh_token 7d). AI: Claude Sonnet 4.5 via EMERGENT_LLM_KEY (emergentintegrations). Payments: Stripe test mode via emergentintegrations. Google OAuth via Emergent demobackend session-data endpoint.
+- **DB collections:** `users` (unique `email`), `payment_transactions` (unique `session_id`), `chat_messages` (index on user_id + created_at).
 
-## What's implemented (2026-04-21)
-- Dark-mode landing page: fixed glass navbar, hero with animated headline + neon green CTA, 3-card features grid with hover neon glow, minimal footer.
-- Full auth flow: register, login, logout, `/me`, `/refresh` under `/api/auth/*` with httpOnly cookies.
-- Signup/Login modal with Escape + outside-click close, inline errors, loading state, sonner success toasts.
-- Navbar reflects auth state (Log in + Sign up ↔ email + Log out).
-- End-to-end tested: 13/13 backend pytest cases + full Playwright frontend flow passed.
+## What's implemented
+**2026-04-21 — Landing MVP**
+- Hero + Features (3 cards) + Footer. Email/password auth with httpOnly JWT cookies. 13/13 backend + full frontend test pass.
+
+**2026-04-21 — Premium, AI Buddy, Contact, Google Auth**
+- Sections: Hero, Features, HowItWorks, Pricing (Free + Premium $9.99/mo), Contact (GitHub + Instagram + email aaronsamuel0205@gmail.com), Footer (with GitHub + Instagram icons + "Built by @Aaron-Samuel05").
+- Stripe test-mode checkout (plan_id=`premium_monthly`, $9.99 USD) → flips `users.is_premium=true` via status polling + webhook.
+- AI Buddy floating launcher: free users see Premium gate with Upgrade CTA; premium users chat with Claude Sonnet 4.5 (`/api/ai/chat` persists history in `chat_messages`).
+- Emergent-managed Google Auth: "Continue with Google" in AuthModal → `auth.emergentagent.com` flow → `/api/auth/google/exchange` upserts user by email and issues the same JWT cookies.
+- Animations: pulsing hero glow, animated "proof" neon text, staggered section reveals, AI Buddy launcher ping.
+- 23/23 backend pytest + full frontend Playwright pass.
 
 ## Prioritized backlog
 **P1**
-- Post-auth dashboard: workout logging (sets/reps/RPE), progress charts, custom plan builder.
-- Server-side session refresh on 401 via axios interceptor calling `/auth/refresh`.
-- Password reset (forgot/reset endpoints already outlined in playbook, not yet wired).
-- CORS: replace `*` fallback with explicit preview + prod origins.
+- Authenticated dashboard: workout logging (sets/reps/RPE/tempo) + progress charts.
+- Rollback orphaned user message in `/api/ai/chat` when Claude call fails.
+- Server-side origin_url allowlist for Stripe success/cancel URLs (open-redirect hardening).
+- Replace CORS `*` fallback with explicit origin list; set cookies `secure=True` via env flag for production.
 
 **P2**
+- Split `server.py` into `routes/auth.py`, `routes/payments.py`, `routes/ai.py` as surface grows.
+- Password reset flow + axios 401 interceptor calling `/api/auth/refresh`.
 - Brute-force lockout on `/auth/login` (5/15min via `login_attempts` collection).
-- Secure cookie flag driven by env (`COOKIE_SECURE=true` in production).
-- Marketing sections: pricing, testimonials, "How it works".
-- SEO: meta tags, OG image, sitemap, favicon.
+- "Add password" flow for Google-only users so they can later log in with email+password.
 
 **P3**
-- Social proof strip, blog, API docs, Apple Health import.
+- Manage-billing portal via Stripe Customer Portal.
+- Apple Health / Google Fit import on first-run.
+- Marketing: testimonials, blog, SEO meta/OG images.
 
 ## Next tasks
-1. Build authenticated dashboard (workout log + progress chart).
-2. Add `/auth/forgot-password` and `/auth/reset-password` endpoints + email delivery.
-3. Add axios response interceptor for automatic refresh on 401.
+1. Build authenticated dashboard (workout log + progress charts).
+2. Tighten prod config (CORS allowlist, secure cookies, Stripe origin allowlist).
+3. Implement password reset + 401 refresh interceptor.

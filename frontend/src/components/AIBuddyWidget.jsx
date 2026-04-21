@@ -83,7 +83,7 @@ export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.8, duration: 0.4 }}
         onClick={openWidget}
-        className="fixed bottom-6 right-6 z-40 group inline-flex items-center gap-2 pl-4 pr-5 py-3 rounded-full bg-[#39FF14] text-black font-semibold shadow-[0_0_24px_rgba(57,255,20,0.35)] hover:shadow-[0_0_48px_rgba(57,255,20,0.65)] hover:-translate-y-0.5 transition-all duration-300"
+        className="fixed bottom-20 right-6 z-40 group inline-flex items-center gap-2 pl-4 pr-5 py-3 rounded-full bg-[#39FF14] text-black font-semibold shadow-[0_0_24px_rgba(57,255,20,0.35)] hover:shadow-[0_0_48px_rgba(57,255,20,0.65)] hover:-translate-y-0.5 transition-all duration-300"
         data-testid="ai-buddy-launcher"
         aria-label="Open AI Buddy"
       >
