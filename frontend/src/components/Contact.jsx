@@ -25,6 +25,22 @@ const LINKS = [
   },
 ];
 
+// Open external links at the top browser context so they escape the preview
+// iframe — Instagram/GitHub send X-Frame-Options which otherwise triggers
+// ERR_BLOCKED_BY_RESPONSE inside an iframe even with target="_blank".
+function openExternal(href) {
+  if (href.startsWith("mailto:")) {
+    window.location.href = href;
+    return;
+  }
+  try {
+    const win = (window.top || window).open(href, "_blank", "noopener,noreferrer");
+    if (!win) window.location.href = href;
+  } catch {
+    window.location.href = href;
+  }
+}
+
 export default function Contact() {
   return (
     <section
@@ -55,13 +71,17 @@ export default function Contact() {
               <motion.a
                 key={l.label}
                 href={l.href}
-                target={l.href.startsWith("mailto:") ? "_self" : "_blank"}
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternal(l.href);
+                }}
+                target="_blank"
                 rel="noopener noreferrer"
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.5, delay: i * 0.08 }}
-                className="group bg-[#0A0A0A] border border-zinc-800 rounded-2xl p-6 md:p-7 flex items-center justify-between hover:border-[#39FF14]/50 hover:-translate-y-0.5 transition-all duration-500"
+                className="group bg-[#0A0A0A] border border-zinc-800 rounded-2xl p-6 md:p-7 flex items-center justify-between hover:border-[#39FF14]/50 hover:-translate-y-0.5 transition-all duration-500 cursor-pointer"
                 data-testid={l.testid}
               >
                 <div className="flex items-center gap-4 min-w-0">
