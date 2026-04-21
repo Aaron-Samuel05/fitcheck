@@ -19,21 +19,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout,
-    CheckoutSessionRequest,
-)
 
 
 # --- Config ---
 JWT_ALGORITHM = "HS256"
 ACCESS_TTL_MIN = 15
 REFRESH_TTL_DAYS = 7
-
-# Fixed server-side pricing. Never take amounts from the client.
-PREMIUM_PLANS = {
-    "premium_monthly": {"amount": 9.99, "currency": "usd", "label": "FitCheck Premium (monthly)"},
-}
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -62,11 +53,6 @@ class ChatMessageIn(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     session_id: Optional[str] = None
-
-
-class CheckoutRequest(BaseModel):
-    plan_id: str
-    origin_url: str
 
 
 class GoogleExchangeRequest(BaseModel):
@@ -161,7 +147,6 @@ def public_user(u: dict) -> dict:
         "id": u["id"],
         "email": u["email"],
         "created_at": created_at,
-        "is_premium": bool(u.get("is_premium", False)),
     }
 
 
@@ -183,7 +168,6 @@ async def register(body: RegisterRequest, response: Response):
         "id": user_id,
         "email": email,
         "password_hash": hash_password(body.password),
-        "is_premium": False,
         "created_at": now.isoformat(),
     }
     await db.users.insert_one(doc)
@@ -252,7 +236,7 @@ async def google_exchange(body: GoogleExchangeRequest, response: Response):
     Exchanges an Emergent Google OAuth session_id (from URL fragment) for
     a FitCheck session. Upserts the user in MongoDB and issues the same
     httpOnly access/refresh JWT cookies used by email/password auth so the
-    rest of the app (premium flag, /auth/me, logout, AI chat, Stripe) keeps
+    rest of the app (/auth/me, logout, AI chat, workouts, plans) keeps
     working unchanged.
     """
     try:
@@ -294,7 +278,6 @@ async def google_exchange(body: GoogleExchangeRequest, response: Response):
             "email": email,
             "name": name,
             "picture": picture,
-            "is_premium": False,
             "google_linked": True,
             "created_at": now_iso,
             # No password_hash — Google-only accounts can't log in with password
@@ -310,7 +293,7 @@ async def google_exchange(body: GoogleExchangeRequest, response: Response):
 
 # --- AI Buddy chat ---
 AI_SYSTEM_PROMPT = (
-    "You are FitCheck Coach, a premium AI fitness buddy. "
+    "You are FitCheck Coach, the in-app AI fitness buddy. "
     "You help users with workout planning, exercise form cues, recovery, nutrition basics, and motivation. "
     "Keep replies concise (2-5 short paragraphs), encouraging, and practical. "
     "Ask clarifying questions when a user's goal or context is unclear. "
@@ -320,9 +303,6 @@ AI_SYSTEM_PROMPT = (
 
 @api_router.post("/ai/chat")
 async def ai_chat(body: ChatRequest, user: dict = Depends(get_current_user)):
-    if not user.get("is_premium"):
-        raise HTTPException(status_code=402, detail="Premium subscription required")
-
     session_id = body.session_id or str(uuid.uuid4())
 
     api_key = os.environ.get("EMERGENT_LLM_KEY")
@@ -335,39 +315,37 @@ async def ai_chat(body: ChatRequest, user: dict = Depends(get_current_user)):
         system_message=AI_SYSTEM_PROMPT,
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
 
-    # Persist user message first
-    now = datetime.now(timezone.utc).isoformat()
-    await db.chat_messages.insert_one({
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "session_id": session_id,
-        "role": "user",
-        "content": body.message,
-        "created_at": now,
-    })
-
     try:
         reply = await chat.send_message(UserMessage(text=body.message))
     except Exception as e:
         logging.exception("AI chat failed")
         raise HTTPException(status_code=502, detail=f"AI service error: {str(e)[:200]}")
 
-    await db.chat_messages.insert_one({
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "session_id": session_id,
-        "role": "assistant",
-        "content": reply,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.chat_messages.insert_many([
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "session_id": session_id,
+            "role": "user",
+            "content": body.message,
+            "created_at": now_iso,
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "session_id": session_id,
+            "role": "assistant",
+            "content": reply,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    ])
 
     return {"session_id": session_id, "reply": reply}
 
 
 @api_router.get("/ai/history")
 async def ai_history(session_id: Optional[str] = None, user: dict = Depends(get_current_user)):
-    if not user.get("is_premium"):
-        raise HTTPException(status_code=402, detail="Premium subscription required")
     query = {"user_id": user["id"]}
     if session_id:
         query["session_id"] = session_id
@@ -375,135 +353,160 @@ async def ai_history(session_id: Optional[str] = None, user: dict = Depends(get_
     return {"messages": msgs}
 
 
-# --- Stripe payments ---
-def _get_stripe(http_request: Request) -> StripeCheckout:
-    api_key = os.environ.get("STRIPE_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Payments not configured")
-    host_url = str(http_request.base_url).rstrip("/")
-    webhook_url = f"{host_url}/api/webhook/stripe"
-    return StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+# --- Workouts & Plans (core app) ---
+class WorkoutSet(BaseModel):
+    reps: int = Field(ge=0, le=1000)
+    weight: float = Field(ge=0, le=2000)  # kg or lb, unit agnostic
 
 
-@api_router.get("/payments/plans")
-async def get_plans():
-    return {
-        "plans": [
-            {"id": k, **v} for k, v in PREMIUM_PLANS.items()
-        ]
-    }
+class ExerciseEntry(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    sets: List[WorkoutSet] = Field(default_factory=list)
 
 
-@api_router.post("/payments/checkout")
-async def create_checkout(
-    body: CheckoutRequest,
-    http_request: Request,
-    user: dict = Depends(get_current_user),
-):
-    if body.plan_id not in PREMIUM_PLANS:
-        raise HTTPException(status_code=400, detail="Invalid plan")
+class WorkoutCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    date: Optional[str] = None  # ISO date string "YYYY-MM-DD"; default = today
+    notes: Optional[str] = Field(default="", max_length=1000)
+    exercises: List[ExerciseEntry] = Field(default_factory=list)
 
-    plan = PREMIUM_PLANS[body.plan_id]
-    origin = body.origin_url.rstrip("/")
-    success_url = f"{origin}/?payment=success&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{origin}/?payment=cancelled"
 
-    stripe_checkout = _get_stripe(http_request)
-    req = CheckoutSessionRequest(
-        amount=float(plan["amount"]),
-        currency=plan["currency"],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={
-            "user_id": user["id"],
-            "user_email": user["email"],
-            "plan_id": body.plan_id,
-        },
+class PlanDay(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    exercises: List[str] = Field(default_factory=list)  # simple list of exercise names
+
+
+class PlanCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    goal: Optional[str] = Field(default="", max_length=400)
+    days: List[PlanDay] = Field(default_factory=list)
+
+
+def _workout_volume(exercises: List[dict]) -> float:
+    total = 0.0
+    for ex in exercises or []:
+        for s in ex.get("sets") or []:
+            total += float(s.get("reps", 0)) * float(s.get("weight", 0))
+    return round(total, 2)
+
+
+@api_router.get("/workouts")
+async def list_workouts(user: dict = Depends(get_current_user)):
+    docs = await (
+        db.workouts.find({"user_id": user["id"]}, {"_id": 0})
+        .sort("date", -1)
+        .to_list(500)
     )
-    session = await stripe_checkout.create_checkout_session(req)
+    return {"workouts": docs}
 
-    await db.payment_transactions.insert_one({
+
+@api_router.post("/workouts")
+async def create_workout(body: WorkoutCreate, user: dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    date_str = (body.date or now.date().isoformat())[:10]
+    exercises = [e.model_dump() for e in body.exercises]
+    doc = {
         "id": str(uuid.uuid4()),
-        "session_id": session.session_id,
         "user_id": user["id"],
-        "user_email": user["email"],
-        "plan_id": body.plan_id,
-        "amount": float(plan["amount"]),
-        "currency": plan["currency"],
-        "status": "initiated",
-        "payment_status": "unpaid",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-
-    return {"url": session.url, "session_id": session.session_id}
-
-
-@api_router.get("/payments/status/{session_id}")
-async def payment_status(session_id: str, http_request: Request, user: dict = Depends(get_current_user)):
-    txn = await db.payment_transactions.find_one({"session_id": session_id, "user_id": user["id"]}, {"_id": 0})
-    if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-
-    # If already finalized as paid, return cached state.
-    if txn.get("payment_status") == "paid":
-        return {
-            "status": txn.get("status"),
-            "payment_status": txn.get("payment_status"),
-            "amount_total": int(round(txn.get("amount", 0) * 100)),
-            "currency": txn.get("currency"),
-            "is_premium": True,
-        }
-
-    stripe_checkout = _get_stripe(http_request)
-    status = await stripe_checkout.get_checkout_status(session_id)
-
-    update = {
-        "status": status.status,
-        "payment_status": status.payment_status,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "name": body.name.strip(),
+        "date": date_str,
+        "notes": (body.notes or "").strip(),
+        "exercises": exercises,
+        "volume": _workout_volume(exercises),
+        "total_sets": sum(len(e.get("sets") or []) for e in exercises),
+        "created_at": now.isoformat(),
     }
+    await db.workouts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
 
-    # Idempotent premium grant: only mark premium once per session.
-    if status.payment_status == "paid" and txn.get("payment_status") != "paid":
-        await db.users.update_one({"id": user["id"]}, {"$set": {"is_premium": True}})
 
-    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": update})
+@api_router.delete("/workouts/{workout_id}")
+async def delete_workout(workout_id: str, user: dict = Depends(get_current_user)):
+    result = await db.workouts.delete_one({"id": workout_id, "user_id": user["id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Workout not found")
+    return {"ok": True}
 
-    is_premium = status.payment_status == "paid" or bool(txn.get("payment_status") == "paid")
+
+@api_router.get("/workouts/stats")
+async def workout_stats(user: dict = Depends(get_current_user)):
+    docs = await db.workouts.find({"user_id": user["id"]}, {"_id": 0}).to_list(1000)
+    total_workouts = len(docs)
+    total_volume = round(sum(d.get("volume", 0) or 0 for d in docs), 2)
+    total_sets = sum(d.get("total_sets", 0) or 0 for d in docs)
+
+    # Weekly volume for last 8 ISO weeks (including current)
+    today = datetime.now(timezone.utc).date()
+    buckets = {}
+    for i in range(7, -1, -1):
+        week_start = today - timedelta(days=today.weekday() + 7 * i)
+        key = week_start.isoformat()
+        buckets[key] = {"week": key, "volume": 0.0, "workouts": 0}
+
+    for d in docs:
+        try:
+            day = datetime.fromisoformat(d["date"]).date()
+        except Exception:
+            continue
+        week_start = day - timedelta(days=day.weekday())
+        key = week_start.isoformat()
+        if key in buckets:
+            buckets[key]["volume"] += float(d.get("volume", 0) or 0)
+            buckets[key]["workouts"] += 1
+
+    weekly = list(buckets.values())
+    for w in weekly:
+        w["volume"] = round(w["volume"], 2)
+
+    # Current streak (consecutive days with a workout ending today)
+    days_with_workout = {d["date"] for d in docs if d.get("date")}
+    streak = 0
+    cursor = today
+    while cursor.isoformat() in days_with_workout:
+        streak += 1
+        cursor = cursor - timedelta(days=1)
+
     return {
-        "status": status.status,
-        "payment_status": status.payment_status,
-        "amount_total": status.amount_total,
-        "currency": status.currency,
-        "is_premium": is_premium,
+        "total_workouts": total_workouts,
+        "total_volume": total_volume,
+        "total_sets": total_sets,
+        "streak_days": streak,
+        "weekly": weekly,
     }
 
 
-@api_router.post("/webhook/stripe")
-async def stripe_webhook(request: Request):
-    try:
-        body = await request.body()
-        stripe_checkout = _get_stripe(request)
-        event = await stripe_checkout.handle_webhook(body, request.headers.get("Stripe-Signature"))
+@api_router.get("/plans")
+async def list_plans(user: dict = Depends(get_current_user)):
+    docs = await (
+        db.plans.find({"user_id": user["id"]}, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(100)
+    )
+    return {"plans": docs}
 
-        if getattr(event, "payment_status", None) == "paid":
-            session_id = getattr(event, "session_id", None)
-            if session_id:
-                txn = await db.payment_transactions.find_one({"session_id": session_id})
-                if txn and txn.get("payment_status") != "paid":
-                    await db.users.update_one({"id": txn["user_id"]}, {"$set": {"is_premium": True}})
-                    await db.payment_transactions.update_one(
-                        {"session_id": session_id},
-                        {"$set": {
-                            "payment_status": "paid",
-                            "status": "complete",
-                            "updated_at": datetime.now(timezone.utc).isoformat(),
-                        }},
-                    )
-        return {"received": True}
-    except Exception as e:
-        logging.exception("Stripe webhook failed")
-        raise HTTPException(status_code=400, detail=str(e))
+
+@api_router.post("/plans")
+async def create_plan(body: PlanCreate, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "name": body.name.strip(),
+        "goal": (body.goal or "").strip(),
+        "days": [d.model_dump() for d in body.days],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.plans.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/plans/{plan_id}")
+async def delete_plan(plan_id: str, user: dict = Depends(get_current_user)):
+    result = await db.plans.delete_one({"id": plan_id, "user_id": user["id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return {"ok": True}
 
 
 app.include_router(api_router)

@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { X, Loader2, Mail, Lock } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 function startGoogleAuth() {
-  const redirectUrl = window.location.origin + "/";
+  const redirectUrl = window.location.origin + "/app";
   window.location.href =
     "https://auth.emergentagent.com/?redirect=" + encodeURIComponent(redirectUrl);
 }
 
 export default function AuthModal({ open, mode, onClose, onSwitchMode }) {
   const { register, login } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -60,6 +62,7 @@ export default function AuthModal({ open, mode, onClose, onSwitchMode }) {
     if (res.ok) {
       toast.success(isSignup ? "Welcome to FitCheck." : "Welcome back.");
       onClose();
+      navigate("/app");
     } else {
       setError(res.error || "Something went wrong. Please try again.");
     }

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, Send, X, Sparkles, Loader2, Lock } from "lucide-react";
+import { Bot, Send, X, Loader2 } from "lucide-react";
 import { api, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { useAuthUI } from "@/context/AuthUIContext";
 import { toast } from "sonner";
 
-export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
+export default function AIBuddyWidget() {
   const { user } = useAuth();
+  const { openAuth } = useAuthUI();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -15,7 +17,6 @@ export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
   const scrollRef = useRef(null);
 
   const isAuthed = user && typeof user === "object";
-  const isPremium = isAuthed && user.is_premium;
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -24,7 +25,7 @@ export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
   }, [messages, loading, open]);
 
   useEffect(() => {
-    if (open && isPremium && messages.length === 0) {
+    if (open && isAuthed && messages.length === 0) {
       setMessages([
         {
           role: "assistant",
@@ -33,11 +34,11 @@ export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
         },
       ]);
     }
-  }, [open, isPremium, messages.length]);
+  }, [open, isAuthed, messages.length]);
 
   const openWidget = () => {
     if (!isAuthed) {
-      onRequestAuth?.("signup");
+      openAuth("signup");
       return;
     }
     setOpen(true);
@@ -54,15 +55,9 @@ export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
       setSessionId(data.session_id);
       setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
     } catch (e) {
-      if (e.response?.status === 402) {
-        setOpen(false);
-        onRequestUpgrade?.();
-        toast.message("AI Buddy is a Premium feature. Upgrade to unlock.");
-      } else {
-        toast.error(formatApiErrorDetail(e.response?.data?.detail) || e.message);
-        setMessages((m) => m.slice(0, -1)); // rollback user msg on error
-        setInput(text);
-      }
+      toast.error(formatApiErrorDetail(e.response?.data?.detail) || e.message);
+      setMessages((m) => m.slice(0, -1));
+      setInput(text);
     } finally {
       setLoading(false);
     }
@@ -77,7 +72,6 @@ export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
 
   return (
     <>
-      {/* Floating launcher */}
       <motion.button
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -123,7 +117,7 @@ export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
                     <div className="font-heading text-sm font-semibold text-white">FitCheck Coach</div>
                     <div className="text-[11px] text-zinc-500 flex items-center gap-1.5">
                       <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#39FF14] animate-pulse" />
-                      Premium AI Buddy
+                      AI fitness buddy · always free
                     </div>
                   </div>
                 </div>
@@ -137,83 +131,57 @@ export default function AIBuddyWidget({ onRequestAuth, onRequestUpgrade }) {
                 </button>
               </div>
 
-              {!isPremium ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
-                  <span className="w-14 h-14 rounded-2xl bg-black border border-[#39FF14]/40 flex items-center justify-center text-[#39FF14] mb-5">
-                    <Lock size={22} />
-                  </span>
-                  <h3 className="font-heading text-2xl font-semibold text-white mb-2">
-                    AI Buddy is Premium
-                  </h3>
-                  <p className="text-sm text-zinc-400 max-w-sm mb-6">
-                    A private coach that plans your weeks, critiques your form cues, and keeps you honest. $9.99/mo, cancel anytime.
-                  </p>
-                  <button
-                    onClick={() => {
-                      setOpen(false);
-                      onRequestUpgrade?.();
-                    }}
-                    className="bg-[#39FF14] text-black font-semibold px-6 py-3 rounded-full hover:bg-[#32E612] transition-all shadow-[0_0_20px_rgba(57,255,20,0.25)] hover:shadow-[0_0_40px_rgba(57,255,20,0.5)] inline-flex items-center gap-2"
-                    data-testid="ai-buddy-upgrade-cta"
-                  >
-                    <Sparkles size={16} /> Upgrade to Premium
-                  </button>
-                </div>
-              ) : (
-                <>
+              <div
+                ref={scrollRef}
+                className="flex-1 overflow-y-auto px-5 py-5 space-y-4"
+                data-testid="ai-buddy-messages"
+              >
+                {messages.map((m, i) => (
                   <div
-                    ref={scrollRef}
-                    className="flex-1 overflow-y-auto px-5 py-5 space-y-4"
-                    data-testid="ai-buddy-messages"
+                    key={i}
+                    className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    {messages.map((m, i) => (
-                      <div
-                        key={i}
-                        className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-                      >
-                        <div
-                          className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                            m.role === "user"
-                              ? "bg-[#39FF14] text-black rounded-br-md"
-                              : "bg-zinc-900 text-zinc-100 border border-zinc-800 rounded-bl-md"
-                          }`}
-                        >
-                          {m.content}
-                        </div>
-                      </div>
-                    ))}
-                    {loading && (
-                      <div className="flex justify-start">
-                        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl rounded-bl-md px-4 py-3 text-sm text-zinc-400 inline-flex items-center gap-2">
-                          <Loader2 size={14} className="animate-spin text-[#39FF14]" />
-                          Coach is thinking…
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="border-t border-zinc-900 p-3 flex items-end gap-2 bg-black">
-                    <textarea
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      onKeyDown={onKeyDown}
-                      rows={1}
-                      placeholder="Ask anything — training, recovery, nutrition…"
-                      className="flex-1 resize-none max-h-32 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#39FF14] focus:border-[#39FF14]"
-                      data-testid="ai-buddy-input"
-                    />
-                    <button
-                      onClick={send}
-                      disabled={loading || !input.trim()}
-                      className="w-11 h-11 shrink-0 rounded-xl bg-[#39FF14] text-black flex items-center justify-center hover:bg-[#32E612] disabled:opacity-40 transition-colors"
-                      aria-label="Send"
-                      data-testid="ai-buddy-send"
+                    <div
+                      className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+                        m.role === "user"
+                          ? "bg-[#39FF14] text-black rounded-br-md"
+                          : "bg-zinc-900 text-zinc-100 border border-zinc-800 rounded-bl-md"
+                      }`}
                     >
-                      {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                    </button>
+                      {m.content}
+                    </div>
                   </div>
-                </>
-              )}
+                ))}
+                {loading && (
+                  <div className="flex justify-start">
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl rounded-bl-md px-4 py-3 text-sm text-zinc-400 inline-flex items-center gap-2">
+                      <Loader2 size={14} className="animate-spin text-[#39FF14]" />
+                      Coach is thinking…
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-zinc-900 p-3 flex items-end gap-2 bg-black">
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  rows={1}
+                  placeholder="Ask anything — training, recovery, nutrition…"
+                  className="flex-1 resize-none max-h-32 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#39FF14] focus:border-[#39FF14]"
+                  data-testid="ai-buddy-input"
+                />
+                <button
+                  onClick={send}
+                  disabled={loading || !input.trim()}
+                  className="w-11 h-11 shrink-0 rounded-xl bg-[#39FF14] text-black flex items-center justify-center hover:bg-[#32E612] disabled:opacity-40 transition-colors"
+                  aria-label="Send"
+                  data-testid="ai-buddy-send"
+                >
+                  {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}

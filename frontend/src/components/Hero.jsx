@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight, Sparkles, LayoutDashboard } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useAuthUI } from "@/context/AuthUIContext";
 
@@ -16,7 +17,6 @@ export default function Hero() {
     >
       <div className="absolute inset-0 hero-grid pointer-events-none" aria-hidden="true" />
 
-      {/* Animated neon glow */}
       <motion.div
         initial={{ opacity: 0.2, scale: 0.9 }}
         animate={{ opacity: [0.25, 0.45, 0.25], scale: [0.95, 1.05, 0.95] }}
@@ -35,7 +35,7 @@ export default function Hero() {
           data-testid="hero-eyebrow"
         >
           <Sparkles size={12} className="text-[#39FF14]" />
-          Now with AI Buddy · Premium
+          AI Buddy included · 100% free
         </motion.div>
 
         <motion.h1
@@ -50,11 +50,13 @@ export default function Hero() {
           <span className="text-zinc-500">Progress with </span>
           <motion.span
             className="text-[#39FF14] neon-text inline-block"
-            animate={{ textShadow: [
-              "0 0 20px rgba(57,255,20,0.35)",
-              "0 0 40px rgba(57,255,20,0.6)",
-              "0 0 20px rgba(57,255,20,0.35)",
-            ] }}
+            animate={{
+              textShadow: [
+                "0 0 20px rgba(57,255,20,0.35)",
+                "0 0 40px rgba(57,255,20,0.6)",
+                "0 0 20px rgba(57,255,20,0.35)",
+              ],
+            }}
             transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
           >
             proof
@@ -79,15 +81,25 @@ export default function Hero() {
           transition={{ duration: 0.6, delay: 0.25 }}
           className="flex flex-col sm:flex-row items-center gap-3 mt-2"
         >
-          <button
-            onClick={() => (isAuthed ? null : openAuth("signup"))}
-            disabled={isAuthed}
-            className="group bg-[#39FF14] text-black font-semibold px-7 py-4 rounded-full hover:bg-[#32E612] transition-all duration-300 shadow-[0_0_24px_rgba(57,255,20,0.25)] hover:shadow-[0_0_48px_rgba(57,255,20,0.5)] hover:-translate-y-0.5 inline-flex items-center gap-2 disabled:opacity-80 disabled:cursor-default"
-            data-testid="hero-cta-get-started"
-          >
-            {isAuthed ? `Welcome, ${user.email.split("@")[0]}` : "Get Started Free"}
-            {!isAuthed && <ArrowRight size={18} className="transition-transform group-hover:translate-x-0.5" />}
-          </button>
+          {isAuthed ? (
+            <Link
+              to="/app"
+              className="group bg-[#39FF14] text-black font-semibold px-7 py-4 rounded-full hover:bg-[#32E612] transition-all duration-300 shadow-[0_0_24px_rgba(57,255,20,0.25)] hover:shadow-[0_0_48px_rgba(57,255,20,0.5)] hover:-translate-y-0.5 inline-flex items-center gap-2"
+              data-testid="hero-cta-open-dashboard"
+            >
+              <LayoutDashboard size={16} /> Open your dashboard
+              <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+            </Link>
+          ) : (
+            <button
+              onClick={() => openAuth("signup")}
+              className="group bg-[#39FF14] text-black font-semibold px-7 py-4 rounded-full hover:bg-[#32E612] transition-all duration-300 shadow-[0_0_24px_rgba(57,255,20,0.25)] hover:shadow-[0_0_48px_rgba(57,255,20,0.5)] hover:-translate-y-0.5 inline-flex items-center gap-2"
+              data-testid="hero-cta-get-started"
+            >
+              Get Started Free
+              <ArrowRight size={18} className="transition-transform group-hover:translate-x-0.5" />
+            </button>
+          )}
 
           <a
             href="#features"

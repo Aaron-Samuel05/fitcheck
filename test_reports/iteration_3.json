@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 3 e2e for FitCheck (Stripe/premium REMOVED; AI Buddy free; new /app dashboard with workouts+plans CRUD and 8-week weekly-volume recharts). Backend pytest: 28/28 PASS — /api/payments/* and /api/webhook/stripe all return 404 as required; /api/auth/me no longer contains is_premium; /api/ai/chat and /api/ai/history work for any authenticated user (real Claude Sonnet 4.5 reply); workouts CRUD computes volume=reps*weight (8*60+6*65+10*40=1270), stats returns weekly[] with exactly 8 ISO-week buckets and streak_days=1 for today; plans CRUD works and foreign IDs return 404; cross-user isolation verified (another user cannot delete owner's workout); all workout/plan/ai endpoints return 401 without cookie. Frontend Playwright: Landing renders Hero with eyebrow 'AI BUDDY INCLUDED · 100% FREE' (Features / How it works / Contact / Footer, NO Pricing section). Navbar signed-out shows Log in + Sign up (no Premium anywhere). Contact email=aaronsamuel0205@gmail.com, GitHub=Aaron-Samuel05, Instagram=aaron_samuel05. Footer shows 'Built by @Aaron-Samuel05'. Email+password signup auto-navigates to /app and lands on dashboard. Initial stats = 0/0/0/0. Log workout modal (name=TEST_Push, exercise=Bench, reps=10, weight=50) → toast 'Workout logged.', stats update to Workouts=1, Total volume=500, Total sets=1, Streak=1, workout card appears and weekly chart bar renders. Delete workout → toast 'Workout deleted.', card removed, stats decrement to 0. Plans: 'New plan' + name + day + exercises list → plan item appears, delete removes it. AI Buddy launcher for any authed user opens panel (no 'Upgrade to Premium' gate), sends message, receives real Claude reply (3 bubbles in ai-buddy-messages). Navbar authed shows Dashboard link and NO Premium badge. Logout returns to landing (Hero + Log in + Sign up restored, POST /api/auth/logout 200, cookies cleared).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard WeeklyVolume chart", "issues": ["recharts prints a console warning 'width(-1) height(-1) of chart should be greater than 0' on first render because the wrapper uses height:'85%' inside a flex container without a resolved parent height at mount. The chart still renders correctly after layout settles. Consider fixing the container to a concrete pixel height (e.g. h-56) or use ResponsiveContainer with aspect prop to silence the warning."]},
+      {"screen": "Dashboard header (top-right)", "issues": ["Logout button sits at x~1227, y~13 — very close to the top-right corner where the Sonner Toaster stacks welcome/ok toasts. Functionally clickable for real users, but automated Playwright clicks with force=True can occasionally be caught by the toast wrapper (workaround: dismiss toasts or dispatch native element.click()). Nudging Toaster away from that corner (e.g. position='bottom-right') would eliminate the overlap risk."]},
+      {"screen": "Global bottom-right", "issues": ["AI Buddy launcher and Emergent 'Made with Emergent' badge overlap near bottom-right on desktop (pre-existing from iter 2). Launcher is already at bottom-20 but the platform badge still nudges it; tests had to remove #emergent-badge via JS to reliably click the launcher."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix recharts width(-1)/height(-1) warning: give the Weekly Volume chart container a concrete pixel height or use ResponsiveContainer with aspect ratio so recharts can measure on first paint.",
+    "(Optional) Move Sonner Toaster to a non-corner position (e.g. bottom-right or top-center) so it does not hover over the Log out button.",
+    "(Optional) Nudge AI Buddy launcher further from the Emergent platform badge or raise its z-index above the badge."
+  ],
+  "critical_code_review_comments": [
+    "CORS: allow_origins still defaults to '*' with allow_credentials=True — invalid for browsers; set CORS_ORIGINS to explicit origin(s) in prod.",
+    "Auth cookies use secure=False (ok for preview; must be True + SameSite=None in prod over HTTPS).",
+    "on_startup still calls db.payment_transactions.create_index — Stripe is fully removed, this collection + index code is dead weight and should be deleted along with any leftover imports.",
+    "server.py is ~540 lines and mixes auth, Google OAuth, AI, workouts, plans — split into modules (routes/auth.py, routes/workouts.py, routes/plans.py, routes/ai.py) before it grows further.",
+    "/api/ai/chat persists the user message BEFORE the Claude call; if the LLM call raises, the user message remains in DB with no matching assistant turn — /ai/history will show orphaned user messages.",
+    "Dashboard.jsx > 700 lines and contains LogWorkoutModal + PlansPanel + WorkoutCard + StatCard inline — should be split into /components/dashboard/*.jsx per your >700-line rule.",
+    "Logout button is at the extreme top-right corner where Sonner Toaster renders — minor UX overlap risk.",
+    "Frontend stat math is done server-side (good), but client handleCreated/handleDelete does an extra GET /workouts/stats right after the create/delete — consider having the server return the new stats in the mutation response to halve round-trips."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (28/28 pytest)", "frontend": "100% (all flows verified incl. AI chat reply and logout round-trip)"},
+  "test_credentials": "Per-run qa+<rand>@fitcheck.app / Passw0rd! (see /app/memory/test_credentials.md). NOTE: that file still references Stripe/is_premium — it needs to be updated by the main agent now that premium is removed.",
+  "seed_data_creation": "Several ephemeral email/password users created via public signup. A handful of workouts + plans created + deleted under those users. Chat messages persisted for AI Buddy validation (consumes small EMERGENT_LLM_KEY credits).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py is pytest + requests only (no pymongo dep now). It asserts Stripe endpoints are gone (404), /auth/me has no is_premium, AI is ungated, workouts+plans CRUD + cross-user isolation, and workout volume math. For the Playwright flow: Sonner Toaster at top-right can intercept force=True clicks on the Dashboard logout-btn; use page.evaluate(\"()=>document.querySelector('[data-testid=logout-btn]').click()\") or dismiss toasts before clicking. Emergent platform badge (#emergent-badge) should be removed via add_init_script before exercising the AI Buddy launcher at bottom-right. Dashboard testids: open-log-workout, workout-name-input, exercise-name-{i}, set-reps-{i}-{j}, set-weight-{i}-{j}, log-workout-save, delete-workout-{id}, toggle-new-plan, plan-name-input, plan-day-name-{i}, plan-day-exercises-{i}, plan-save, delete-plan-{id}, stat-workouts/volume/sets/streak, weekly-chart, logout-btn. AI Buddy testids: ai-buddy-launcher/panel/messages/input/send/close.",
+  "rca of the issue": "No functional bugs in iteration 3. One recharts console warning caused by a percentage height in a flex parent on first paint (cosmetic). One Playwright ergonomics issue where the Sonner toast container overlaps the Dashboard logout button and absorbs force=True clicks (confirmed by swapping to native element.click() which successfully hit POST /api/auth/logout → 200 → cookies cleared → Navigate('/') → Landing restored). All critical review-request items verified: Stripe/premium endpoints return 404, /auth/me is_premium removed, AI ungated, workouts+plans CRUD with correct volume math, 8-bucket weekly chart, today streak=1, 401 on unauth, signup/login navigate to /app, logged-out AI launcher opens signup modal (verified indirectly — when cookies are cleared the launcher click opens the AuthModal; with stale cookies it opens the chat panel), navbar has Dashboard link + no Premium badge, Contact + Footer strings all correct."
+}
