@@ -1,4 +1,4 @@
-import { Activity } from "lucide-react";
+import { Activity, Github, Instagram } from "lucide-react";
 
 export default function Footer() {
   const year = new Date().getFullYear();
@@ -22,26 +22,43 @@ export default function Footer() {
           </div>
         </div>
 
-        <nav className="flex flex-wrap items-center gap-6 text-sm text-zinc-500">
-          <a href="#features" className="hover:text-white transition-colors" data-testid="footer-features">
-            Features
+        <nav className="flex flex-wrap items-center gap-5 text-sm text-zinc-500">
+          <a href="#features" className="hover:text-white transition-colors" data-testid="footer-features">Features</a>
+          <a href="#how" className="hover:text-white transition-colors" data-testid="footer-how">How it works</a>
+          <a href="#pricing" className="hover:text-white transition-colors" data-testid="footer-pricing">Pricing</a>
+          <a href="#contact" className="hover:text-white transition-colors" data-testid="footer-contact">Contact</a>
+          <a
+            href="https://github.com/Aaron-Samuel05"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-zinc-500 hover:text-[#39FF14] transition-colors"
+            aria-label="GitHub"
+            data-testid="footer-github"
+          >
+            <Github size={16} />
           </a>
-          <a href="#top" className="hover:text-white transition-colors" data-testid="footer-get-started">
-            Get started
-          </a>
-          <a href="mailto:hello@fitcheck.app" className="hover:text-white transition-colors" data-testid="footer-contact">
-            Contact
-          </a>
-          <a href="#" className="hover:text-white transition-colors" data-testid="footer-privacy">
-            Privacy
-          </a>
-          <a href="#" className="hover:text-white transition-colors" data-testid="footer-terms">
-            Terms
+          <a
+            href="https://www.instagram.com/aaron_samuel05/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-zinc-500 hover:text-[#39FF14] transition-colors"
+            aria-label="Instagram"
+            data-testid="footer-instagram"
+          >
+            <Instagram size={16} />
           </a>
         </nav>
 
         <div className="text-xs text-zinc-600" data-testid="footer-copyright">
-          © {year} FitCheck. All rights reserved.
+          © {year} FitCheck · Built by{" "}
+          <a
+            href="https://github.com/Aaron-Samuel05"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-[#39FF14] transition-colors"
+          >
+            @Aaron-Samuel05
+          </a>
         </div>
       </div>
     </footer>

@@ -17,6 +17,12 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    // If returning from Google OAuth, skip initial /auth/me — GoogleCallbackHandler
+    // will exchange the session_id first, then call refresh().
+    if (typeof window !== "undefined" && window.location.hash?.includes("session_id=")) {
+      setUser(false);
+      return;
+    }
     fetchMe();
   }, [fetchMe]);
 
