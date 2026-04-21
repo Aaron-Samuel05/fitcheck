@@ -54,7 +54,8 @@ export default function App() {
             </Routes>
             <Toaster
               theme="dark"
-              position="top-right"
+              position="bottom-right"
+              offset={100}
               toastOptions={{
                 style: {
                   background: "#0A0A0A",

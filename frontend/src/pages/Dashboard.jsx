@@ -36,33 +36,35 @@ function StatCard({ icon: Icon, label, value, unit, testid }) {
 
 function WeeklyChart({ data }) {
   return (
-    <div className="bg-[#0A0A0A] border border-zinc-800 rounded-2xl p-5 h-72" data-testid="weekly-chart">
+    <div className="bg-[#0A0A0A] border border-zinc-800 rounded-2xl p-5" data-testid="weekly-chart">
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Weekly volume</div>
         <div className="text-[11px] text-zinc-600">Last 8 weeks</div>
       </div>
-      <ResponsiveContainer width="100%" height="85%">
-        <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: -16 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1f1f22" vertical={false} />
-          <XAxis
-            dataKey="week"
-            tick={{ fill: "#52525b", fontSize: 10 }}
-            tickFormatter={(v) => {
-              const d = new Date(v);
-              return `${d.getMonth() + 1}/${d.getDate()}`;
-            }}
-            axisLine={{ stroke: "#27272a" }}
-            tickLine={false}
-          />
-          <YAxis tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} />
-          <Tooltip
-            contentStyle={{ background: "#0a0a0a", border: "1px solid #27272a", borderRadius: 12, fontSize: 12 }}
-            labelStyle={{ color: "#a1a1aa" }}
-            formatter={(v) => [v, "volume"]}
-          />
-          <Bar dataKey="volume" fill="#39FF14" radius={[6, 6, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
+      <div style={{ width: "100%", height: 220 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: -16 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f1f22" vertical={false} />
+            <XAxis
+              dataKey="week"
+              tick={{ fill: "#52525b", fontSize: 10 }}
+              tickFormatter={(v) => {
+                const d = new Date(v);
+                return `${d.getMonth() + 1}/${d.getDate()}`;
+              }}
+              axisLine={{ stroke: "#27272a" }}
+              tickLine={false}
+            />
+            <YAxis tick={{ fill: "#52525b", fontSize: 10 }} axisLine={false} tickLine={false} />
+            <Tooltip
+              contentStyle={{ background: "#0a0a0a", border: "1px solid #27272a", borderRadius: 12, fontSize: 12 }}
+              labelStyle={{ color: "#a1a1aa" }}
+              formatter={(v) => [v, "volume"]}
+            />
+            <Bar dataKey="volume" fill="#39FF14" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
