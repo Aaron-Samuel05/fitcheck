@@ -31,7 +31,9 @@ dist/
 dist
 
 # Environment files (comprehensive coverage)
-
+.env
+.env.local
+.env.*.local
 *token.json*
 *credentials.json*
 
@@ -83,3 +85,5 @@ android-sdk/frontend/node_modules/.cache/default-development/9.pack
 frontend/node_modules/.cache/default-development/1.pack
 frontend/node_modules/.cache/default-development/9.pack
 frontend/node_modules/.cache/default-development/2.pack
+frontend/node_modules/.cache/default-development/3.pack
+frontend/node_modules/.cache/default-development/4.pack
