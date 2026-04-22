@@ -1,3 +1,4 @@
+from fastapi import Depends
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
@@ -68,6 +69,27 @@ def create_refresh(user_id):
         "exp": datetime.now(timezone.utc) + timedelta(days=REFRESH_TTL_DAYS)
     }, get_secret(), algorithm=JWT_ALGORITHM)
 
+# --- Helper: Get current user ---
+async def get_current_user(request: Request):
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        raise HTTPException(401, "Not authenticated")
+
+    try:
+        token = auth_header.split(" ")[1]
+        payload = jwt.decode(token, get_secret(), algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        return user
+
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
 # --- Auth Routes ---
 @api_router.post("/auth/register")
 async def register(body: RegisterRequest):
@@ -82,7 +104,11 @@ async def register(body: RegisterRequest):
     }
 
     await db.users.insert_one(user)
-    return {"message": "registered"}
+
+    return {
+        "access_token": create_access(user["id"], user["email"]),
+        "refresh_token": create_refresh(user["id"])
+    }
 
 @api_router.post("/auth/login")
 async def login(body: LoginRequest):
@@ -96,10 +122,17 @@ async def login(body: LoginRequest):
         "refresh_token": create_refresh(user["id"])
     }
 
-# --- GOOGLE LOGIN FIX (IMPORTANT) ---
+# --- CURRENT USER ---
+@api_router.get("/auth/me")
+async def get_me(current_user=Depends(get_current_user)):
+    return {
+        "id": current_user["id"],
+        "email": current_user["email"]
+    }
+
+# --- GOOGLE LOGIN (TEMP MOCK) ---
 @api_router.post("/auth/google/exchange")
 async def google_exchange():
-    # TEMPORARY MOCK (so frontend stops crashing)
     return {
         "access_token": create_access("google_user", "google@gmail.com"),
         "refresh_token": create_refresh("google_user")
@@ -120,7 +153,7 @@ async def root():
 
 app.include_router(api_router)
 
-# --- CORS FIX (CRITICAL) ---
+# --- CORS (FIXED) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
