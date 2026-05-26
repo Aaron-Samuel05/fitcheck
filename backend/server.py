@@ -1,4 +1,6 @@
 from fastapi import Depends, FastAPI, APIRouter, HTTPException, Request, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from pathlib import Path
 import os
@@ -483,5 +485,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Static Frontend Serving ---
+FRONTEND_BUILD_DIR = Path(__file__).parent.parent / "frontend" / "build"
+
+# Serve static assets (js, css, media)
+if (FRONTEND_BUILD_DIR / "static").exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_BUILD_DIR / "static")), name="static")
+
+# Catch-all for non-existent API routes (ensures clean 404 for all HTTP methods)
+@app.api_route("/api/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def api_catch_all(path_name: str):
+    raise HTTPException(status_code=404, detail="Not Found")
+
+# Catch-all route to serve the React index.html or individual build files (favicon, manifest, etc.)
+@app.get("/{path_name:path}")
+async def catch_all(path_name: str):
+    # Check if the requested file exists in the build directory (e.g. favicon.ico, manifest.json)
+    file_path = FRONTEND_BUILD_DIR / path_name
+    if file_path.is_file():
+        return FileResponse(str(file_path))
+        
+    # Fallback to index.html for Single Page Application routing (React Router)
+    index_path = FRONTEND_BUILD_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+        
+    return {"message": "Frontend build not found. Run npm run build."}
 
 logging.basicConfig(level=logging.INFO)
