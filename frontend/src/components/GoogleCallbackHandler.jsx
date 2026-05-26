@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 export default function GoogleCallbackHandler() {
-  const { refresh } = useAuth();
+  const { refresh, logout } = useAuth();
   const navigate = useNavigate();
   const processed = useRef(false);
 
@@ -24,15 +24,19 @@ export default function GoogleCallbackHandler() {
 
     (async () => {
       try {
-        await api.post("/auth/google/exchange", { session_id: sessionId });
+        const { data } = await api.post("/auth/google/exchange", { session_id: sessionId });
+        if (data.access_token) {
+          localStorage.setItem("token", data.access_token);
+        }
         await refresh?.();
         toast.success("Signed in with Google.");
         navigate("/app");
       } catch (e) {
         toast.error(formatApiErrorDetail(e.response?.data?.detail) || e.message);
+        logout();
       }
     })();
-  }, [refresh, navigate]);
+  }, [refresh, logout, navigate]);
 
   return null;
 }

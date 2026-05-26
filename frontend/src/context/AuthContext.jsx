@@ -19,8 +19,16 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
+    const hasSessionId = window.location.hash.includes("session_id=");
 
-    if (!token) {
+    if (!token || token === "undefined" || token === "null") {
+      if (token === "undefined" || token === "null") {
+        localStorage.removeItem("token");
+      }
+      if (hasSessionId) {
+        // Wait for GoogleCallbackHandler to exchange session_id for a token
+        return;
+      }
       setUser(false);
       return;
     }
