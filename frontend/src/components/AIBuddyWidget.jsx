@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, Send, X, Loader2 } from "lucide-react";
+import { Bot, Send, X, Loader2, AlertCircle } from "lucide-react";
 import { api, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useAuthUI } from "@/context/AuthUIContext";
@@ -13,28 +13,58 @@ export default function AIBuddyWidget() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState(null);
   const [sessionId, setSessionId] = useState(null);
   const scrollRef = useRef(null);
 
   const isAuthed = user && typeof user === "object";
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, loading, open]);
 
   useEffect(() => {
-    if (open && isAuthed && messages.length === 0) {
-      setMessages([
-        {
-          role: "assistant",
-          content:
-            "Hey — I'm your FitCheck Coach. Tell me your goal (strength, hypertrophy, fat loss, endurance) and where you are this week, and we'll plan the next move.",
-        },
-      ]);
-    }
-  }, [open, isAuthed, messages.length]);
+    if (!open || !isAuthed) return;
+
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [{ data: statusData }, { data: historyData }] = await Promise.all([
+          api.get("/ai/status"),
+          api.get("/ai/history"),
+        ]);
+        if (cancelled) return;
+        setStatus(statusData);
+        const history = historyData.messages || [];
+        if (history.length) {
+          setMessages(history.map((m) => ({ role: m.role, content: m.message })));
+        } else {
+          setMessages([
+            {
+              role: "assistant",
+              content:
+                "Hey — I'm your FitCheck Coach. Tell me your goal or ask me anything about training, recovery, nutrition, or exercise technique.",
+            },
+          ]);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setStatus({ configured: false });
+          setMessages([
+            {
+              role: "assistant",
+              content: "I couldn't connect to the FitCheck AI service. Try again after the backend is redeployed.",
+              error: true,
+            },
+          ]);
+        }
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isAuthed]);
 
   const openWidget = () => {
     if (!isAuthed) {
@@ -47,16 +77,29 @@ export default function AIBuddyWidget() {
   const send = async () => {
     const text = input.trim();
     if (!text || loading) return;
+
     setInput("");
     setMessages((m) => [...m, { role: "user", content: text }]);
     setLoading(true);
     try {
-      const { data } = await api.post("/ai/chat", { message: text, session_id: sessionId });
+      const { data } = await api.post("/ai/chat", {
+        message: text,
+        session_id: sessionId,
+      });
       setSessionId(data.session_id);
+      setStatus((s) => ({ ...(s || {}), configured: true }));
       setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
     } catch (e) {
-      toast.error(formatApiErrorDetail(e.response?.data?.detail) || e.message);
-      setMessages((m) => m.slice(0, -1));
+      const message = formatApiErrorDetail(e.response?.data?.detail) || e.message || "AI Buddy could not respond.";
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: message,
+          error: true,
+        },
+      ]);
+      toast.error(message);
       setInput(text);
     } finally {
       setLoading(false);
@@ -116,38 +159,27 @@ export default function AIBuddyWidget() {
                   <div>
                     <div className="font-heading text-sm font-semibold text-white">FitCheck Coach</div>
                     <div className="text-[11px] text-zinc-500 flex items-center gap-1.5">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#39FF14] animate-pulse" />
-                      AI fitness buddy · always free
+                      <span className={`inline-block w-1.5 h-1.5 rounded-full ${status?.configured ? "bg-[#39FF14] animate-pulse" : "bg-red-500"}`} />
+                      {status?.configured ? `AI coach · ${status.model || "online"}` : "AI setup required"}
                     </div>
                   </div>
                 </div>
-                <button
-                  onClick={() => setOpen(false)}
-                  className="text-zinc-500 hover:text-white transition-colors"
-                  aria-label="Close"
-                  data-testid="ai-buddy-close"
-                >
+                <button onClick={() => setOpen(false)} className="text-zinc-500 hover:text-white transition-colors" aria-label="Close AI Buddy" data-testid="ai-buddy-close">
                   <X size={18} />
                 </button>
               </div>
 
-              <div
-                ref={scrollRef}
-                className="flex-1 overflow-y-auto px-5 py-5 space-y-4"
-                data-testid="ai-buddy-messages"
-              >
+              {!status?.configured && status !== null && (
+                <div className="mx-5 mt-4 flex gap-2 rounded-xl border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200" data-testid="ai-buddy-config-warning">
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <span>Add <b>EMERGENT_LLM_KEY</b> to the backend environment, then redeploy the backend.</span>
+                </div>
+              )}
+
+              <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-4" data-testid="ai-buddy-messages">
                 {messages.map((m, i) => (
-                  <div
-                    key={i}
-                    className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                        m.role === "user"
-                          ? "bg-[#39FF14] text-black rounded-br-md"
-                          : "bg-zinc-900 text-zinc-100 border border-zinc-800 rounded-bl-md"
-                      }`}
-                    >
+                  <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${m.role === "user" ? "bg-[#39FF14] text-black rounded-br-md" : m.error ? "bg-red-950/30 text-red-200 border border-red-900/50 rounded-bl-md" : "bg-zinc-900 text-zinc-100 border border-zinc-800 rounded-bl-md"}`}>
                       {m.content}
                     </div>
                   </div>
