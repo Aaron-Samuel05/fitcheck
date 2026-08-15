@@ -56,6 +56,14 @@ class GoogleExchangeRequest(BaseModel):
     session_id: str
 
 
+class ProfileUpdateRequest(BaseModel):
+    name: str = Field(default="", max_length=80)
+    age: Optional[int] = Field(default=None, ge=13, le=100)
+    height_cm: Optional[float] = Field(default=None, ge=100, le=250)
+    weight_kg: Optional[float] = Field(default=None, ge=25, le=300)
+    goal: str = Field(default="", max_length=120)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     session_id: Optional[str] = None
@@ -75,6 +83,7 @@ class WorkoutCreateRequest(BaseModel):
     name: str
     exercises: List[Exercise]
     date: Optional[str] = None
+    notes: Optional[str] = None
 
 
 class PlanDay(BaseModel):
@@ -132,6 +141,16 @@ def create_refresh(user_id: str):
     )
 
 
+def profile_from_user(user: dict) -> dict:
+    return {
+        "name": user.get("name", ""),
+        "age": user.get("age"),
+        "height_cm": user.get("height_cm"),
+        "weight_kg": user.get("weight_kg"),
+        "goal": user.get("goal", ""),
+    }
+
+
 async def get_current_user(request: Request):
     token = None
     auth_header = request.headers.get("Authorization")
@@ -173,6 +192,11 @@ async def register(body: RegisterRequest, response: Response):
         "email": email,
         "password_hash": hash_password(body.password),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "name": "",
+        "age": None,
+        "height_cm": None,
+        "weight_kg": None,
+        "goal": "",
     }
     await db.users.insert_one(user)
 
@@ -206,7 +230,34 @@ async def logout(response: Response):
 
 @api_router.get("/auth/me")
 async def get_me(current_user=Depends(get_current_user)):
-    return {"id": current_user["id"], "email": current_user["email"]}
+    return {
+        "id": current_user["id"],
+        "email": current_user["email"],
+        "profile": profile_from_user(current_user),
+    }
+
+
+@api_router.get("/profile")
+async def get_profile(current_user=Depends(get_current_user)):
+    return {
+        "id": current_user["id"],
+        "email": current_user["email"],
+        "profile": profile_from_user(current_user),
+    }
+
+
+@api_router.patch("/profile")
+async def update_profile(body: ProfileUpdateRequest, current_user=Depends(get_current_user)):
+    values = body.model_dump()
+    values["name"] = values["name"].strip()
+    values["goal"] = values["goal"].strip()
+    await db.users.update_one({"id": current_user["id"]}, {"$set": values})
+    updated = await db.users.find_one({"id": current_user["id"]})
+    return {
+        "id": updated["id"],
+        "email": updated["email"],
+        "profile": profile_from_user(updated),
+    }
 
 
 @api_router.post("/auth/refresh")
@@ -232,13 +283,6 @@ async def refresh_token_flow(request: Request, response: Response):
 
 @api_router.post("/auth/google/exchange")
 async def google_exchange(body: GoogleExchangeRequest, response: Response):
-    """Exchange the session_id returned by the configured Google auth service.
-
-    The previous implementation silently converted any unknown session into
-    google@gmail.com, which made Google sign-in look successful without
-    authenticating the actual Google account. We now require the session to
-    contain a real email claim.
-    """
     try:
         payload = jwt.decode(body.session_id, options={"verify_signature": False})
         email = payload.get("email")
@@ -246,10 +290,7 @@ async def google_exchange(body: GoogleExchangeRequest, response: Response):
         email = None
 
     if not email:
-        raise HTTPException(
-            401,
-            "Google session could not be verified. Configure the Google auth provider for this deployment.",
-        )
+        raise HTTPException(401, "Google session could not be verified. Configure the Google auth provider for this deployment.")
 
     email = str(email).lower()
     user = await db.users.find_one({"email": email})
@@ -259,6 +300,11 @@ async def google_exchange(body: GoogleExchangeRequest, response: Response):
             "email": email,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "auth_provider": "google",
+            "name": "",
+            "age": None,
+            "height_cm": None,
+            "weight_kg": None,
+            "goal": "",
         }
         await db.users.insert_one(user)
 
@@ -272,35 +318,43 @@ async def google_exchange(body: GoogleExchangeRequest, response: Response):
 # ---------------- AI Buddy ----------------
 AI_SYSTEM_PROMPT = """You are FitCheck Coach, a knowledgeable and encouraging fitness coach.
 Give practical, concise answers about training, exercise selection, recovery, nutrition,
-progressive overload, cardio, and healthy habits. Use the user's conversation context.
-Do not diagnose medical conditions or replace a clinician. If a question suggests injury,
-serious symptoms, an eating disorder, or another medical concern, recommend professional care.
-Prefer actionable advice and explain the reasoning briefly. Never pretend that you performed
-an action you did not perform."""
+progressive overload, cardio, and healthy habits. Use the user's conversation context and
+profile when available. Do not diagnose medical conditions or replace a clinician. If a
+question suggests injury, serious symptoms, an eating disorder, or another medical concern,
+recommend professional care. Prefer actionable advice and explain the reasoning briefly.
+Never pretend that you performed an action you did not perform."""
 
 
 async def generate_ai_reply(session_id: str, user_message: str, user_id: str) -> str:
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "").strip()
     if not api_key:
-        raise HTTPException(503, "AI Buddy is not configured yet. Add EMERGENT_LLM_KEY to the backend environment.")
+        raise HTTPException(503, "AI Buddy is not configured. Add EMERGENT_LLM_KEY to the backend environment and redeploy.")
+
+    user = await db.users.find_one({"id": user_id})
+    profile = profile_from_user(user or {})
+    profile_text = ", ".join(f"{k}: {v}" for k, v in profile.items() if v not in (None, "")) or "No profile details provided"
 
     previous = await db.chat_messages.find(
         {"user_id": user_id, "session_id": session_id}
     ).sort("created_at", -1).to_list(12)
     previous.reverse()
-
     context = "\n".join(
         f"{m.get('role', 'user').upper()}: {m.get('message', '')}"
         for m in previous
     )
-    prompt = f"Conversation so far:\n{context}\n\nUSER: {user_message}\n\nReply as FitCheck Coach."
+    prompt = (
+        f"User profile: {profile_text}\n\n"
+        f"Conversation so far:\n{context}\n\n"
+        f"USER: {user_message}\n\nReply as FitCheck Coach."
+    )
 
     try:
+        model_name = os.environ.get("FITCHECK_AI_MODEL", "gemini-3-flash-preview")
         chat = LlmChat(
             api_key=api_key,
             session_id=f"fitcheck-{user_id}-{session_id}",
             system_message=AI_SYSTEM_PROMPT,
-        ).with_model("gemini", os.environ.get("FITCHECK_AI_MODEL", "gemini-3-flash-preview"))
+        ).with_model("gemini", model_name)
         result = await chat.send_message(UserMessage(text=prompt))
         reply = str(result).strip()
         if not reply:
@@ -310,7 +364,16 @@ async def generate_ai_reply(session_id: str, user_message: str, user_id: str) ->
         raise
     except Exception as e:
         logging.exception("AI Buddy provider error")
-        raise HTTPException(502, f"AI Buddy could not respond: {e}")
+        raise HTTPException(502, f"AI Buddy could not respond: {str(e)[:300]}")
+
+
+@api_router.get("/ai/status")
+async def ai_status(current_user=Depends(get_current_user)):
+    key_configured = bool(os.environ.get("EMERGENT_LLM_KEY", "").strip())
+    return {
+        "configured": key_configured,
+        "model": os.environ.get("FITCHECK_AI_MODEL", "gemini-3-flash-preview"),
+    }
 
 
 @api_router.post("/ai/chat")
@@ -326,7 +389,12 @@ async def ai_chat(body: ChatRequest, current_user=Depends(get_current_user)):
         "created_at": now,
     })
 
-    reply = await generate_ai_reply(session_id, body.message, current_user["id"])
+    try:
+        reply = await generate_ai_reply(session_id, body.message, current_user["id"])
+    except HTTPException:
+        await db.chat_messages.delete_one({"user_id": current_user["id"], "session_id": session_id, "role": "user", "created_at": now})
+        raise
+
     await db.chat_messages.insert_one({
         "id": str(uuid.uuid4()),
         "user_id": current_user["id"],
@@ -362,7 +430,9 @@ async def create_workout(body: WorkoutCreateRequest, current_user=Depends(get_cu
         "exercises": [ex.model_dump() for ex in body.exercises],
         "volume": volume,
         "total_sets": total_sets,
-        "created_at": body.date or datetime.now(timezone.utc).isoformat(),
+        "date": body.date or date.today().isoformat(),
+        "notes": body.notes or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.workouts.insert_one(workout)
     workout.pop("_id", None)
@@ -426,7 +496,7 @@ async def get_workout_stats(current_user=Depends(get_current_user)):
     for i in range(8):
         start = monday - timedelta(weeks=7 - i)
         end = start + timedelta(days=6)
-        bucket = {"week": f"Wk {i + 1}", "volume": 0, "workouts": 0}
+        bucket = {"week": start.isoformat(), "volume": 0, "workouts": 0}
         for w in workouts:
             try:
                 d = datetime.fromisoformat(w["created_at"].replace("Z", "+00:00")).date()
@@ -490,7 +560,7 @@ app.include_router(api_router)
 
 cors_origins = [x.strip() for x in os.environ.get(
     "CORS_ORIGINS",
-    "http://localhost:3000,https://fitcheck-org.vercel.app"
+    "http://localhost:3000,https://fitcheck-org.vercel.app",
 ).split(",") if x.strip()]
 
 app.add_middleware(
@@ -508,7 +578,7 @@ if (FRONTEND_BUILD_DIR / "static").exists():
 
 @app.api_route("/api/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def api_catch_all(path_name: str):
-    raise HTTPException(404, "Not Found")
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 @app.get("/{path_name:path}")
