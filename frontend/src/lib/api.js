@@ -22,6 +22,35 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+let refreshPromise = null;
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    const status = error.response?.status;
+    const isAuthEndpoint = original?.url?.includes("/auth/");
+
+    if (status !== 401 || !original || original._retry || isAuthEndpoint) {
+      return Promise.reject(error);
+    }
+
+    original._retry = true;
+    try {
+      refreshPromise ||= api.post("/auth/refresh");
+      const { data } = await refreshPromise;
+      localStorage.setItem("token", data.access_token);
+      refreshPromise = null;
+      original.headers.Authorization = `Bearer ${data.access_token}`;
+      return api(original);
+    } catch (refreshError) {
+      refreshPromise = null;
+      localStorage.removeItem("token");
+      return Promise.reject(refreshError);
+    }
+  }
+);
+
 export function formatApiErrorDetail(detail) {
   if (detail == null) return "Something went wrong. Please try again.";
   if (typeof detail === "string") return detail;
