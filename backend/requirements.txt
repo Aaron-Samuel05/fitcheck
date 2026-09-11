@@ -15,6 +15,7 @@ motor==3.3.1
 mongomock-motor==0.0.36
 mongomock==4.3.0
 emergentintegrations==0.1.0
+stripe>=12.0.0
 pytest>=8.0.0
 black>=24.1.1
 isort>=5.13.2
