@@ -7,6 +7,7 @@ import Hero from "@/components/Hero";
 import Features from "@/components/Features";
 import HowItWorks from "@/components/HowItWorks";
 import Contact from "@/components/Contact";
+import PricingSection from "@/components/PricingSection";
 import Footer from "@/components/Footer";
 import AIBuddyWidget from "@/components/AIBuddyWidget";
 import ProfileWidget from "@/components/ProfileWidget";
@@ -16,14 +17,12 @@ import { Toaster } from "sonner";
 
 function Landing() {
   return (
-    <main
-      className="relative min-h-screen bg-black text-white overflow-x-hidden"
-      data-testid="landing-page"
-    >
+    <main className="relative min-h-screen bg-black text-white overflow-x-hidden" data-testid="landing-page">
       <Navbar />
       <Hero />
       <Features />
       <HowItWorks />
+      <PricingSection />
       <Contact />
       <Footer />
       <AIBuddyWidget />
@@ -59,11 +58,7 @@ export default function App() {
               position="bottom-right"
               offset={100}
               toastOptions={{
-                style: {
-                  background: "#0A0A0A",
-                  border: "1px solid #27272A",
-                  color: "#fff",
-                },
+                style: { background: "#0A0A0A", border: "1px solid #27272A", color: "#fff" },
               }}
             />
           </AuthUIProvider>
