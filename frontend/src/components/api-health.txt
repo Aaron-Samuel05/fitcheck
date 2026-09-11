@@ -1,1 +1,0 @@
-This placeholder file intentionally documents that the frontend expects REACT_APP_BACKEND_URL to point to the deployed FastAPI service when the API is not served from the same origin.

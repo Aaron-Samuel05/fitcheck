@@ -1,1 +1,0 @@
-"""FitCheck backend package."""
