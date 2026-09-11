@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 import httpx
 from fastapi import FastAPI, Request
@@ -28,7 +29,28 @@ def get_backend():
 @app.get("/api/health")
 async def health():
     backend = get_backend()
-    return {"ok": True, "service": "fitcheck", "frontend": INDEX.exists(), "backend_loaded": backend is not None, "backend_error": BACKEND_ERROR}
+    required = {
+        "MONGO_URL": bool(os.environ.get("MONGO_URL", "").strip()),
+        "JWT_SECRET": bool(os.environ.get("JWT_SECRET", "").strip()),
+        "AUTH_SESSION_SECRET": bool(os.environ.get("AUTH_SESSION_SECRET", "").strip()),
+        "GOOGLE_CLIENT_ID": bool(os.environ.get("GOOGLE_CLIENT_ID", "").strip()),
+        "GOOGLE_CLIENT_SECRET": bool(os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()),
+        "GOOGLE_REDIRECT_URI": bool(os.environ.get("GOOGLE_REDIRECT_URI", "").strip()),
+        "GEMINI_API_KEY": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+    }
+    return {
+        "ok": backend is not None and INDEX.exists(),
+        "service": "fitcheck",
+        "frontend": INDEX.exists(),
+        "backend_loaded": backend is not None,
+        "backend_error": BACKEND_ERROR,
+        "database": "mongodb" if required["MONGO_URL"] else "NOT_CONFIGURED",
+        "google": "configured" if required["GOOGLE_CLIENT_ID"] and required["GOOGLE_CLIENT_SECRET"] and required["GOOGLE_REDIRECT_URI"] else "NOT_CONFIGURED",
+        "ai": "gemini" if required["GEMINI_API_KEY"] else "NOT_CONFIGURED",
+        "missing_environment": [name for name, present in required.items() if not present],
+        "frontend_url": os.environ.get("FRONTEND_URL", "https://fitcheck-org.vercel.app").rstrip("/"),
+        "ai_model": os.environ.get("FITCHECK_AI_MODEL", "gemini-2.5-flash"),
+    }
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
