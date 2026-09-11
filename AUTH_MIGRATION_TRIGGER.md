@@ -1,1 +1,0 @@
-This file triggers the FitCheck authentication migration workflow. It can be removed after migration.
