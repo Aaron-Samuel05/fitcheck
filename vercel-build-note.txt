@@ -1,0 +1,1 @@
+Vercel entrypoint: app.py. The original frontend is kept in frontend/ and its committed build is served by app.py.
