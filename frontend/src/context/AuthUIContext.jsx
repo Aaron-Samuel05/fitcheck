@@ -1,23 +1,17 @@
 import { createContext, useCallback, useContext, useState } from "react";
-import AuthModal from "@/components/AuthModal";
+import AuthModal from "@/components/AuthModalGoogle";
 
 const AuthUIContext = createContext(null);
 
 export function AuthUIProvider({ children }) {
-  const [mode, setMode] = useState(null); // 'signup' | 'login' | null
-
+  const [mode, setMode] = useState(null);
   const openAuth = useCallback((m = "signup") => setMode(m), []);
   const closeAuth = useCallback(() => setMode(null), []);
 
   return (
     <AuthUIContext.Provider value={{ openAuth, closeAuth }}>
       {children}
-      <AuthModal
-        open={mode !== null}
-        mode={mode || "signup"}
-        onClose={closeAuth}
-        onSwitchMode={(m) => setMode(m)}
-      />
+      <AuthModal open={mode !== null} mode={mode || "signup"} onClose={closeAuth} onSwitchMode={setMode} />
     </AuthUIContext.Provider>
   );
 }
