@@ -6,6 +6,8 @@ import { useAuth } from "@/context/AuthContext";
 import { useAuthUI } from "@/context/AuthUIContext";
 import { toast } from "sonner";
 
+const SESSION_STORAGE_KEY = "fitcheck_ai_session";
+
 export default function AIBuddyWidget() {
   const { user } = useAuth();
   const { openAuth } = useAuthUI();
@@ -14,7 +16,7 @@ export default function AIBuddyWidget() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(null);
-  const [sessionId, setSessionId] = useState(null);
+  const [sessionId, setSessionId] = useState(() => localStorage.getItem(SESSION_STORAGE_KEY) || null);
   const [upgradeRequired, setUpgradeRequired] = useState(false);
   const scrollRef = useRef(null);
 
@@ -50,6 +52,15 @@ export default function AIBuddyWidget() {
     return () => { cancelled = true; };
   }, [open, isAuthed, sessionId, user?.plan]);
 
+  useEffect(() => {
+    if (!isAuthed) {
+      setOpen(false);
+      setMessages([]);
+      setSessionId(null);
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+  }, [isAuthed]);
+
   const openWidget = () => {
     if (!isAuthed) {
       openAuth("signup");
@@ -57,6 +68,8 @@ export default function AIBuddyWidget() {
     }
     setOpen(true);
   };
+
+  const closeWidget = () => setOpen(false);
 
   const send = async () => {
     const text = input.trim();
@@ -72,7 +85,8 @@ export default function AIBuddyWidget() {
     try {
       const { data } = await api.post("/ai/chat", { message: text, session_id: sessionId });
       setSessionId(data.session_id);
-      setStatus((s) => ({ ...(s || {}), configured: true }));
+      localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
+      setStatus((s) => ({ ...(s || {}), configured: true, daily_used: (s?.daily_used || 0) + 1 }));
       setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
     } catch (e) {
       const code = e.response?.status;
@@ -108,7 +122,7 @@ export default function AIBuddyWidget() {
 
       <AnimatePresence>
         {open && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-6" onClick={() => setOpen(false)} data-testid="ai-buddy-overlay">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-6" onClick={closeWidget} data-testid="ai-buddy-overlay">
             <motion.div initial={{ y: 40, opacity: 0, scale: 0.98 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: 40, opacity: 0, scale: 0.98 }} transition={{ type: "spring", stiffness: 260, damping: 28 }} onClick={(e) => e.stopPropagation()} className="bg-[#0A0A0A] border border-zinc-800 rounded-t-2xl md:rounded-2xl w-full md:max-w-xl h-[85vh] md:h-[640px] flex flex-col shadow-2xl shadow-black overflow-hidden" data-testid="ai-buddy-panel">
               <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-900">
                 <div className="flex items-center gap-3">
@@ -118,7 +132,7 @@ export default function AIBuddyWidget() {
                     <div className="text-[11px] text-zinc-500 flex items-center gap-1.5"><span className={`inline-block w-1.5 h-1.5 rounded-full ${status?.configured ? "bg-[#39FF14] animate-pulse" : "bg-red-500"}`} />{status?.configured ? `AI coach · ${status.model || "online"}` : "AI unavailable"}</div>
                   </div>
                 </div>
-                <button onClick={() => setOpen(false)} className="text-zinc-500 hover:text-white transition-colors" aria-label="Close AI Buddy" data-testid="ai-buddy-close"><X size={18} /></button>
+                <button onClick={closeWidget} className="text-zinc-500 hover:text-white transition-colors" aria-label="Close AI Buddy" data-testid="ai-buddy-close"><X size={18} /></button>
               </div>
 
               {status?.configured && status.daily_limit != null && (
@@ -137,7 +151,7 @@ export default function AIBuddyWidget() {
                   <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                     <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${m.role === "user" ? "bg-[#39FF14] text-black rounded-br-md" : m.error ? "bg-red-950/30 text-red-200 border border-red-900/50 rounded-bl-md" : "bg-zinc-900 text-zinc-100 border border-zinc-800 rounded-bl-md"}`}>
                       {m.content}
-                      {m.paywall && <a href="#pricing" onClick={() => setOpen(false)} className="mt-3 inline-flex items-center gap-1 text-[#39FF14] font-semibold hover:text-white">Upgrade to Pro <ArrowUpRight size={13} /></a>}
+                      {m.paywall && <a href="#pricing" onClick={closeWidget} className="mt-3 inline-flex items-center gap-1 text-[#39FF14] font-semibold hover:text-white">Upgrade to Pro <ArrowUpRight size={13} /></a>}
                     </div>
                   </div>
                 ))}
