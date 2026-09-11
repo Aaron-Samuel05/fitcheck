@@ -1,0 +1,1 @@
+The original frontend visual tree is restored from the last known good FitCheck revision.
