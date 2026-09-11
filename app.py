@@ -61,8 +61,13 @@ async def api_proxy(request: Request, path: str):
     async with httpx.AsyncClient(transport=transport, base_url="http://fitcheck.internal") as client:
         upstream = await client.request(request.method, target, content=body, headers=headers)
 
-    response_headers = [(k.decode(), v.decode()) for k, v in upstream.headers.raw if k.lower() not in {b"content-length", b"transfer-encoding", b"connection"}]
-    return Response(content=upstream.content, status_code=upstream.status_code, headers=dict(response_headers), media_type=upstream.headers.get("content-type"))
+    response = Response(content=upstream.content, status_code=upstream.status_code)
+    response.raw_headers = [
+        (k, v)
+        for k, v in upstream.headers.raw
+        if k.lower() not in {b"content-length", b"transfer-encoding", b"connection"}
+    ]
+    return response
 
 
 @app.get("/{path:path}")
