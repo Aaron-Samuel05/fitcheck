@@ -11,7 +11,7 @@ import PricingSection from "@/components/PricingSection";
 import Footer from "@/components/Footer";
 import AIBuddyWidget from "@/components/AIBuddyWidget";
 import ProfileWidget from "@/components/ProfileWidget";
-import GoogleCallbackHandler from "@/components/GoogleCallbackHandler";
+import GoogleCallbackHandler from "@/components/GoogleCallbackHandlerNative";
 import BillingReturnHandler from "@/components/BillingReturnHandler";
 import Dashboard from "@/pages/Dashboard";
 import { Toaster } from "sonner";
@@ -55,14 +55,7 @@ export default function App() {
               <Route path="/app" element={<DashboardPage />} />
               <Route path="*" element={<Landing />} />
             </Routes>
-            <Toaster
-              theme="dark"
-              position="bottom-right"
-              offset={100}
-              toastOptions={{
-                style: { background: "#0A0A0A", border: "1px solid #27272A", color: "#fff" },
-              }}
-            />
+            <Toaster theme="dark" position="bottom-right" offset={100} toastOptions={{ style: { background: "#0A0A0A", border: "1px solid #27272A", color: "#fff" } }} />
           </AuthUIProvider>
         </BrowserRouter>
       </AuthProvider>
