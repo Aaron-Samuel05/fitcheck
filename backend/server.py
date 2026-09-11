@@ -11,6 +11,7 @@ from typing import Optional, List
 import bcrypt
 import jwt
 import pymongo
+import stripe
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,7 @@ load_dotenv(ROOT_DIR / ".env")
 JWT_ALGORITHM = "HS256"
 ACCESS_TTL_MIN = int(os.environ.get("ACCESS_TTL_MIN", "60"))
 REFRESH_TTL_DAYS = int(os.environ.get("REFRESH_TTL_DAYS", "30"))
+FREE_AI_DAILY_LIMIT = int(os.environ.get("FREE_AI_DAILY_LIMIT", "5"))
 
 mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 db_name = os.environ.get("DB_NAME", "fitcheck")
@@ -44,7 +46,7 @@ api_router = APIRouter(prefix="/api")
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
@@ -69,32 +71,36 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+class CheckoutRequest(BaseModel):
+    plan_id: str = Field(min_length=1, max_length=80)
+
+
 class SetExercise(BaseModel):
-    reps: int
-    weight: float
+    reps: int = Field(ge=0, le=1000)
+    weight: float = Field(ge=0, le=100000)
 
 
 class Exercise(BaseModel):
-    name: str
-    sets: List[SetExercise]
+    name: str = Field(min_length=1, max_length=120)
+    sets: List[SetExercise] = Field(default_factory=list, max_length=50)
 
 
 class WorkoutCreateRequest(BaseModel):
-    name: str
-    exercises: List[Exercise]
+    name: str = Field(min_length=1, max_length=120)
+    exercises: List[Exercise] = Field(default_factory=list, max_length=50)
     date: Optional[str] = None
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=1000)
 
 
 class PlanDay(BaseModel):
-    name: str
-    exercises: List[str]
+    name: str = Field(min_length=1, max_length=80)
+    exercises: List[str] = Field(default_factory=list, max_length=50)
 
 
 class PlanCreateRequest(BaseModel):
-    name: str
-    goal: Optional[str] = None
-    days: List[PlanDay]
+    name: str = Field(min_length=1, max_length=120)
+    goal: Optional[str] = Field(default=None, max_length=120)
+    days: List[PlanDay] = Field(default_factory=list, max_length=14)
 
 
 def hash_password(password: str) -> str:
@@ -109,10 +115,9 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def get_secret() -> str:
-    secret = os.environ.get("JWT_SECRET")
+    secret = os.environ.get("JWT_SECRET", "").strip()
     if not secret:
-        logging.warning("JWT_SECRET is not configured; using development secret.")
-        return "dev_secret"
+        raise RuntimeError("JWT_SECRET is not configured")
     return secret
 
 
@@ -151,6 +156,25 @@ def profile_from_user(user: dict) -> dict:
     }
 
 
+def plan_from_user(user: dict) -> str:
+    return user.get("plan", "free")
+
+
+def is_paid_user(user: dict) -> bool:
+    return plan_from_user(user) == "buddy_pro" and user.get("subscription_status") in ("active", "trialing")
+
+
+def public_user(user: dict) -> dict:
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "profile": profile_from_user(user),
+        "plan": plan_from_user(user),
+        "subscription_status": user.get("subscription_status"),
+        "current_period_end": user.get("current_period_end"),
+    }
+
+
 async def get_current_user(request: Request):
     token = None
     auth_header = request.headers.get("Authorization")
@@ -172,8 +196,15 @@ async def get_current_user(request: Request):
         return user
     except HTTPException:
         raise
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
     except Exception:
         raise HTTPException(401, "Invalid or expired token")
+
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
+    response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=True, path="/")
+    response.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", secure=True, path="/api/auth")
 
 
 @api_router.get("/health")
@@ -197,14 +228,16 @@ async def register(body: RegisterRequest, response: Response):
         "height_cm": None,
         "weight_kg": None,
         "goal": "",
+        "plan": "free",
+        "subscription_status": None,
+        "current_period_end": None,
     }
     await db.users.insert_one(user)
 
     access_token = create_access(user["id"], user["email"])
     refresh_token = create_refresh(user["id"])
-    response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=True)
-    response.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", secure=True)
-    return {"id": user["id"], "email": user["email"], "access_token": access_token}
+    set_auth_cookies(response, access_token, refresh_token)
+    return public_user(user) | {"access_token": access_token}
 
 
 @api_router.post("/auth/login")
@@ -216,34 +249,25 @@ async def login(body: LoginRequest, response: Response):
 
     access_token = create_access(user["id"], user["email"])
     refresh_token = create_refresh(user["id"])
-    response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=True)
-    response.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", secure=True)
-    return {"id": user["id"], "email": user["email"], "access_token": access_token}
+    set_auth_cookies(response, access_token, refresh_token)
+    return public_user(user) | {"access_token": access_token}
 
 
 @api_router.post("/auth/logout")
 async def logout(response: Response):
-    response.delete_cookie("access_token")
-    response.delete_cookie("refresh_token")
+    response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/api/auth")
     return {"ok": True}
 
 
 @api_router.get("/auth/me")
 async def get_me(current_user=Depends(get_current_user)):
-    return {
-        "id": current_user["id"],
-        "email": current_user["email"],
-        "profile": profile_from_user(current_user),
-    }
+    return public_user(current_user)
 
 
 @api_router.get("/profile")
 async def get_profile(current_user=Depends(get_current_user)):
-    return {
-        "id": current_user["id"],
-        "email": current_user["email"],
-        "profile": profile_from_user(current_user),
-    }
+    return public_user(current_user)
 
 
 @api_router.patch("/profile")
@@ -253,11 +277,7 @@ async def update_profile(body: ProfileUpdateRequest, current_user=Depends(get_cu
     values["goal"] = values["goal"].strip()
     await db.users.update_one({"id": current_user["id"]}, {"$set": values})
     updated = await db.users.find_one({"id": current_user["id"]})
-    return {
-        "id": updated["id"],
-        "email": updated["email"],
-        "profile": profile_from_user(updated),
-    }
+    return public_user(updated)
 
 
 @api_router.post("/auth/refresh")
@@ -273,7 +293,7 @@ async def refresh_token_flow(request: Request, response: Response):
         if not user:
             raise HTTPException(404, "User not found")
         access_token = create_access(user["id"], user["email"])
-        response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=True)
+        response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=True, path="/")
         return {"ok": True, "access_token": access_token}
     except HTTPException:
         raise
@@ -283,14 +303,20 @@ async def refresh_token_flow(request: Request, response: Response):
 
 @api_router.post("/auth/google/exchange")
 async def google_exchange(body: GoogleExchangeRequest, response: Response):
+    # The auth broker must provide a verifiable JWT. Never trust an unsigned payload.
     try:
-        payload = jwt.decode(body.session_id, options={"verify_signature": False})
+        signing_key = os.environ.get("GOOGLE_SESSION_SIGNING_KEY", "").strip()
+        if not signing_key:
+            raise HTTPException(503, "Google auth is not configured on this deployment.")
+        payload = jwt.decode(body.session_id, signing_key, algorithms=["HS256"])
         email = payload.get("email")
+        provider = payload.get("provider")
+        if provider not in (None, "google") or not email:
+            raise HTTPException(401, "Invalid Google session")
+    except HTTPException:
+        raise
     except Exception:
-        email = None
-
-    if not email:
-        raise HTTPException(401, "Google session could not be verified. Configure the Google auth provider for this deployment.")
+        raise HTTPException(401, "Invalid or expired Google session")
 
     email = str(email).lower()
     user = await db.users.find_one({"email": email})
@@ -305,14 +331,16 @@ async def google_exchange(body: GoogleExchangeRequest, response: Response):
             "height_cm": None,
             "weight_kg": None,
             "goal": "",
+            "plan": "free",
+            "subscription_status": None,
+            "current_period_end": None,
         }
         await db.users.insert_one(user)
 
     access_token = create_access(user["id"], user["email"])
     refresh_token = create_refresh(user["id"])
-    response.set_cookie("access_token", access_token, httponly=True, samesite="lax", secure=True)
-    response.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", secure=True)
-    return {"id": user["id"], "email": user["email"], "access_token": access_token}
+    set_auth_cookies(response, access_token, refresh_token)
+    return public_user(user) | {"access_token": access_token}
 
 
 # ---------------- AI Buddy ----------------
@@ -325,6 +353,11 @@ recommend professional care. Prefer actionable advice and explain the reasoning 
 Never pretend that you performed an action you did not perform."""
 
 
+async def daily_ai_usage(user_id: str) -> int:
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    return await db.chat_messages.count_documents({"user_id": user_id, "role": "user", "created_at": {"$gte": start}})
+
+
 async def generate_ai_reply(session_id: str, user_message: str, user_id: str) -> str:
     api_key = os.environ.get("EMERGENT_LLM_KEY", "").strip()
     if not api_key:
@@ -333,28 +366,14 @@ async def generate_ai_reply(session_id: str, user_message: str, user_id: str) ->
     user = await db.users.find_one({"id": user_id})
     profile = profile_from_user(user or {})
     profile_text = ", ".join(f"{k}: {v}" for k, v in profile.items() if v not in (None, "")) or "No profile details provided"
-
-    previous = await db.chat_messages.find(
-        {"user_id": user_id, "session_id": session_id}
-    ).sort("created_at", -1).to_list(12)
+    previous = await db.chat_messages.find({"user_id": user_id, "session_id": session_id}).sort("created_at", -1).to_list(12)
     previous.reverse()
-    context = "\n".join(
-        f"{m.get('role', 'user').upper()}: {m.get('message', '')}"
-        for m in previous
-    )
-    prompt = (
-        f"User profile: {profile_text}\n\n"
-        f"Conversation so far:\n{context}\n\n"
-        f"USER: {user_message}\n\nReply as FitCheck Coach."
-    )
+    context = "\n".join(f"{m.get('role', 'user').upper()}: {m.get('message', '')}" for m in previous)
+    prompt = f"User profile: {profile_text}\n\nConversation so far:\n{context}\n\nUSER: {user_message}\n\nReply as FitCheck Coach."
 
     try:
         model_name = os.environ.get("FITCHECK_AI_MODEL", "gemini-3-flash-preview")
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"fitcheck-{user_id}-{session_id}",
-            system_message=AI_SYSTEM_PROMPT,
-        ).with_model("gemini", model_name)
+        chat = LlmChat(api_key=api_key, session_id=f"fitcheck-{user_id}-{session_id}", system_message=AI_SYSTEM_PROMPT).with_model("gemini", model_name)
         result = await chat.send_message(UserMessage(text=prompt))
         reply = str(result).strip()
         if not reply:
@@ -364,30 +383,34 @@ async def generate_ai_reply(session_id: str, user_message: str, user_id: str) ->
         raise
     except Exception as e:
         logging.exception("AI Buddy provider error")
-        raise HTTPException(502, f"AI Buddy could not respond: {str(e)[:300]}")
+        raise HTTPException(502, "AI Buddy is temporarily unavailable. Please try again.")
 
 
 @api_router.get("/ai/status")
 async def ai_status(current_user=Depends(get_current_user)):
     key_configured = bool(os.environ.get("EMERGENT_LLM_KEY", "").strip())
+    usage = await daily_ai_usage(current_user["id"])
+    paid = is_paid_user(current_user)
     return {
         "configured": key_configured,
         "model": os.environ.get("FITCHECK_AI_MODEL", "gemini-3-flash-preview"),
+        "plan": plan_from_user(current_user),
+        "paid": paid,
+        "daily_limit": None if paid else FREE_AI_DAILY_LIMIT,
+        "daily_used": usage,
     }
 
 
 @api_router.post("/ai/chat")
 async def ai_chat(body: ChatRequest, current_user=Depends(get_current_user)):
+    if not is_paid_user(current_user):
+        usage = await daily_ai_usage(current_user["id"])
+        if usage >= FREE_AI_DAILY_LIMIT:
+            raise HTTPException(402, "You have reached today's free AI Buddy limit. Upgrade to AI Buddy Pro for unlimited coaching.")
+
     session_id = body.session_id or str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    await db.chat_messages.insert_one({
-        "id": str(uuid.uuid4()),
-        "user_id": current_user["id"],
-        "session_id": session_id,
-        "role": "user",
-        "message": body.message,
-        "created_at": now,
-    })
+    await db.chat_messages.insert_one({"id": str(uuid.uuid4()), "user_id": current_user["id"], "session_id": session_id, "role": "user", "message": body.message, "created_at": now})
 
     try:
         reply = await generate_ai_reply(session_id, body.message, current_user["id"])
@@ -395,14 +418,7 @@ async def ai_chat(body: ChatRequest, current_user=Depends(get_current_user)):
         await db.chat_messages.delete_one({"user_id": current_user["id"], "session_id": session_id, "role": "user", "created_at": now})
         raise
 
-    await db.chat_messages.insert_one({
-        "id": str(uuid.uuid4()),
-        "user_id": current_user["id"],
-        "session_id": session_id,
-        "role": "assistant",
-        "message": reply,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    await db.chat_messages.insert_one({"id": str(uuid.uuid4()), "user_id": current_user["id"], "session_id": session_id, "role": "assistant", "message": reply, "created_at": datetime.now(timezone.utc).isoformat()})
     return {"session_id": session_id, "reply": reply}
 
 
@@ -418,6 +434,154 @@ async def ai_history(session_id: Optional[str] = None, current_user=Depends(get_
     return {"messages": messages}
 
 
+# ---------------- Billing ----------------
+BILLING_PLANS = {
+    "buddy_pro_monthly": {"name": "AI Buddy Pro", "price_label": "$9.99 / month", "price_env": "STRIPE_PRICE_BUDDY_PRO_MONTHLY"},
+    "buddy_pro_yearly": {"name": "AI Buddy Pro", "price_label": "$79.99 / year", "price_env": "STRIPE_PRICE_BUDDY_PRO_YEARLY"},
+}
+
+
+def stripe_ready() -> bool:
+    return bool(os.environ.get("STRIPE_SECRET_KEY", "").strip())
+
+
+def stripe_configured_price(plan_id: str) -> str:
+    plan = BILLING_PLANS.get(plan_id)
+    if not plan:
+        raise HTTPException(400, "Unknown billing plan")
+    price_id = os.environ.get(plan["price_env"], "").strip()
+    if not price_id:
+        raise HTTPException(503, f"{plan['name']} billing is not configured yet.")
+    return price_id
+
+
+@api_router.get("/billing/plans")
+async def billing_plans():
+    return {
+        "plans": [
+            {"id": "free", "name": "FitCheck Free", "price": "$0", "period": "forever", "features": ["Unlimited workout logging", "Progress & volume tracking", "Training programs", "Streaks & weekly trends"]},
+            {"id": "buddy_pro_monthly", "name": "AI Buddy Pro", "price": "$9.99", "period": "month", "features": ["Everything in Free", "Unlimited AI coaching", "Personalized training guidance", "Profile-aware coaching"]},
+            {"id": "buddy_pro_yearly", "name": "AI Buddy Pro", "price": "$79.99", "period": "year", "features": ["Everything in Free", "Unlimited AI coaching", "Best value", "Profile-aware coaching"]},
+        ]
+    }
+
+
+@api_router.get("/billing/status")
+async def billing_status(current_user=Depends(get_current_user)):
+    return {
+        "plan": plan_from_user(current_user),
+        "subscription_status": current_user.get("subscription_status"),
+        "current_period_end": current_user.get("current_period_end"),
+        "paid": is_paid_user(current_user),
+    }
+
+
+@api_router.post("/billing/checkout")
+async def billing_checkout(body: CheckoutRequest, request: Request, current_user=Depends(get_current_user)):
+    if not stripe_ready():
+        raise HTTPException(503, "Billing is not configured. Add STRIPE_SECRET_KEY and Stripe Price IDs to the backend environment.")
+    if is_paid_user(current_user):
+        raise HTTPException(409, "AI Buddy Pro is already active on this account.")
+
+    stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
+    price_id = stripe_configured_price(body.plan_id)
+    frontend_url = os.environ.get("FRONTEND_URL", str(request.base_url).rstrip("/"))
+
+    try:
+        customer_id = current_user.get("stripe_customer_id")
+        if not customer_id:
+            customer = stripe.Customer.create(email=current_user["email"], metadata={"fitcheck_user_id": current_user["id"]})
+            customer_id = customer.id
+            await db.users.update_one({"id": current_user["id"]}, {"$set": {"stripe_customer_id": customer_id}})
+
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer=customer_id,
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=f"{frontend_url}/app?billing=success",
+            cancel_url=f"{frontend_url}/app?billing=cancelled",
+            client_reference_id=current_user["id"],
+            metadata={"fitcheck_user_id": current_user["id"], "plan_id": body.plan_id},
+            subscription_data={"metadata": {"fitcheck_user_id": current_user["id"], "plan_id": body.plan_id}},
+        )
+        return {"url": session.url, "session_id": session.id}
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception("Stripe checkout creation failed")
+        raise HTTPException(502, "Unable to start checkout right now. Please try again.")
+
+
+@api_router.post("/billing/portal")
+async def billing_portal(request: Request, current_user=Depends(get_current_user)):
+    if not stripe_ready():
+        raise HTTPException(503, "Billing is not configured on this deployment.")
+    customer_id = current_user.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(400, "No billing account is connected to this user yet.")
+    stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
+    frontend_url = os.environ.get("FRONTEND_URL", str(request.base_url).rstrip("/"))
+    try:
+        portal = stripe.billing_portal.Session.create(customer=customer_id, return_url=f"{frontend_url}/app")
+        return {"url": portal.url}
+    except Exception:
+        logging.exception("Stripe customer portal creation failed")
+        raise HTTPException(502, "Unable to open billing management right now.")
+
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+    if not webhook_secret:
+        raise HTTPException(503, "Stripe webhook is not configured.")
+
+    payload = await request.body()
+    signature = request.headers.get("Stripe-Signature")
+    try:
+        event = stripe.Webhook.construct_event(payload, signature, webhook_secret)
+    except ValueError:
+        raise HTTPException(400, "Invalid webhook payload")
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(400, "Invalid webhook signature")
+
+    event_type = event.get("type")
+    obj = event.get("data", {}).get("object", {})
+    subscription = obj if event_type and event_type.startswith("customer.subscription.") else None
+
+    if event_type == "checkout.session.completed":
+        user_id = obj.get("client_reference_id") or obj.get("metadata", {}).get("fitcheck_user_id")
+        customer_id = obj.get("customer")
+        subscription_id = obj.get("subscription")
+        if user_id:
+            values = {"stripe_customer_id": customer_id, "stripe_subscription_id": subscription_id}
+            if subscription_id:
+                try:
+                    sub = stripe.Subscription.retrieve(subscription_id)
+                    values.update({"plan": "buddy_pro", "subscription_status": sub.status, "current_period_end": datetime.fromtimestamp(sub.current_period_end, timezone.utc).isoformat()})
+                except Exception:
+                    values.update({"plan": "buddy_pro", "subscription_status": "active"})
+            await db.users.update_one({"id": user_id}, {"$set": values})
+
+    elif subscription:
+        user_id = subscription.get("metadata", {}).get("fitcheck_user_id")
+        customer_id = subscription.get("customer")
+        sub_status = subscription.get("status")
+        paid_status = sub_status in ("active", "trialing")
+        values = {
+            "stripe_customer_id": customer_id,
+            "stripe_subscription_id": subscription.get("id"),
+            "subscription_status": sub_status,
+            "current_period_end": datetime.fromtimestamp(subscription["current_period_end"], timezone.utc).isoformat() if subscription.get("current_period_end") else None,
+            "plan": "buddy_pro" if paid_status else "free",
+        }
+        if user_id:
+            await db.users.update_one({"id": user_id}, {"$set": values})
+        elif customer_id:
+            await db.users.update_one({"stripe_customer_id": customer_id}, {"$set": values})
+
+    return {"received": True}
+
+
 # ---------------- Workouts ----------------
 @api_router.post("/workouts")
 async def create_workout(body: WorkoutCreateRequest, current_user=Depends(get_current_user)):
@@ -426,12 +590,12 @@ async def create_workout(body: WorkoutCreateRequest, current_user=Depends(get_cu
     workout = {
         "id": str(uuid.uuid4()),
         "user_id": current_user["id"],
-        "name": body.name,
+        "name": body.name.strip(),
         "exercises": [ex.model_dump() for ex in body.exercises],
         "volume": volume,
         "total_sets": total_sets,
-        "date": body.date or date.today().isoformat(),
-        "notes": body.notes or "",
+        "date": body.date or datetime.now().astimezone().date().isoformat(),
+        "notes": (body.notes or "").strip(),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.workouts.insert_one(workout)
@@ -472,14 +636,17 @@ async def get_workout_stats(current_user=Depends(get_current_user)):
     workout_dates = set()
     for w in workouts:
         try:
-            workout_dates.add(datetime.fromisoformat(w["created_at"].replace("Z", "+00:00")).date())
+            workout_dates.add(datetime.fromisoformat(w.get("date", "")).date())
         except Exception:
-            pass
+            try:
+                workout_dates.add(datetime.fromisoformat(w["created_at"].replace("Z", "+00:00")).date())
+            except Exception:
+                pass
 
     streak_days = 0
     if workout_dates:
         sorted_dates = sorted(workout_dates, reverse=True)
-        today = date.today()
+        today = datetime.now().astimezone().date()
         if sorted_dates[0] in (today, today - timedelta(days=1)):
             streak_days = 1
             current = sorted_dates[0]
@@ -490,7 +657,7 @@ async def get_workout_stats(current_user=Depends(get_current_user)):
                 elif current != next_date:
                     break
 
-    today = date.today()
+    today = datetime.now().astimezone().date()
     monday = today - timedelta(days=today.weekday())
     weekly = []
     for i in range(8):
@@ -499,21 +666,15 @@ async def get_workout_stats(current_user=Depends(get_current_user)):
         bucket = {"week": start.isoformat(), "volume": 0, "workouts": 0}
         for w in workouts:
             try:
-                d = datetime.fromisoformat(w["created_at"].replace("Z", "+00:00")).date()
-                if start <= d <= end:
-                    bucket["volume"] += w.get("volume", 0)
-                    bucket["workouts"] += 1
+                d = datetime.fromisoformat(w.get("date", "")).date()
             except Exception:
-                pass
+                continue
+            if start <= d <= end:
+                bucket["volume"] += w.get("volume", 0)
+                bucket["workouts"] += 1
         weekly.append(bucket)
 
-    return {
-        "total_workouts": total_workouts,
-        "total_volume": total_volume,
-        "total_sets": total_sets,
-        "streak_days": streak_days,
-        "weekly": weekly,
-    }
+    return {"total_workouts": total_workouts, "total_volume": total_volume, "total_sets": total_sets, "streak_days": streak_days, "weekly": weekly}
 
 
 # ---------------- Plans ----------------
@@ -522,8 +683,8 @@ async def create_plan(body: PlanCreateRequest, current_user=Depends(get_current_
     plan = {
         "id": str(uuid.uuid4()),
         "user_id": current_user["id"],
-        "name": body.name,
-        "goal": body.goal,
+        "name": body.name.strip(),
+        "goal": (body.goal or "").strip(),
         "days": [day.model_dump() for day in body.days],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -558,27 +719,12 @@ async def root():
 
 app.include_router(api_router)
 
-cors_origins = [x.strip() for x in os.environ.get(
-    "CORS_ORIGINS",
-    "http://localhost:3000,https://fitcheck-org.vercel.app",
-).split(",") if x.strip()]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors_origins = [x.strip() for x in os.environ.get("CORS_ORIGINS", "http://localhost:3000,https://fitcheck-org.vercel.app").split(",") if x.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 FRONTEND_BUILD_DIR = Path(__file__).parent.parent / "frontend" / "build"
 if (FRONTEND_BUILD_DIR / "static").exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_BUILD_DIR / "static")), name="static")
-
-
-@app.api_route("/api/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-async def api_catch_all(path_name: str):
-    raise HTTPException(status_code=404, detail="Not Found")
 
 
 @app.get("/{path_name:path}")
