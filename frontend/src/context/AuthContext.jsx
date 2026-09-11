@@ -12,25 +12,15 @@ export function AuthProvider({ children }) {
       setUser(data);
       return data;
     } catch (error) {
-      const status = error?.response?.status;
-      if (status === 401 || status === 404) {
-        setUser(false);
-        localStorage.removeItem("token");
-      }
-      // Keep the app in a loading/configuration state for network and server errors.
+      if (error?.response?.status === 401 || error?.response?.status === 404) localStorage.removeItem("token");
+      setUser(false);
       return false;
     }
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const hasGoogleSession = new URLSearchParams(window.location.hash.replace(/^#/, "")).has("session_id");
-    if (hasGoogleSession) return;
-    if (!token || token === "undefined" || token === "null") {
-      localStorage.removeItem("token");
-      setUser(false);
-      return;
-    }
+    // Native Google OAuth authenticates with an HttpOnly cookie. This also means
+    // a refresh/reload keeps the user signed in without exposing the token to JS.
     fetchMe();
   }, [fetchMe]);
 
@@ -39,8 +29,7 @@ export function AuthProvider({ children }) {
       const { data } = await api.post("/auth/register", { email: email.trim(), password });
       if (!data?.access_token) throw new Error("Account created but no session was returned.");
       localStorage.setItem("token", data.access_token);
-      const me = await fetchMe();
-      if (!me) throw new Error("Account created, but the session could not be loaded. Check the API connection.");
+      if (!await fetchMe()) throw new Error("Account created, but the session could not be loaded.");
       return { ok: true };
     } catch (e) {
       return { ok: false, error: formatApiErrorDetail(e.response?.data?.detail) || e.message };
@@ -52,8 +41,7 @@ export function AuthProvider({ children }) {
       const { data } = await api.post("/auth/login", { email: email.trim(), password });
       if (!data?.access_token) throw new Error("Login succeeded but no access token was returned.");
       localStorage.setItem("token", data.access_token);
-      const me = await fetchMe();
-      if (!me) throw new Error("Signed in, but the session could not be loaded. Check the API connection.");
+      if (!await fetchMe()) throw new Error("Signed in, but the session could not be loaded.");
       return { ok: true };
     } catch (e) {
       localStorage.removeItem("token");
