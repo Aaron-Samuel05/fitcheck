@@ -44,7 +44,8 @@ export default function AIBuddyWidget() {
       } catch (e) {
         if (!cancelled) {
           setStatus({ configured: false, plan: user?.plan || "free" });
-          setMessages([{ role: "assistant", content: "FitCheck Coach is temporarily unavailable. Check the API deployment and AI environment configuration.", error: true }]);
+          const message = formatApiErrorDetail(e.response?.data?.detail) || "FitCheck Coach is temporarily unavailable. Check the Gemini AI configuration.";
+          setMessages([{ role: "assistant", content: message, error: true }]);
         }
       }
     };
@@ -143,7 +144,7 @@ export default function AIBuddyWidget() {
               )}
 
               {!status?.configured && status !== null && (
-                <div className="mx-5 mt-4 flex gap-2 rounded-xl border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200"><AlertCircle size={14} className="shrink-0 mt-0.5" /><span>Add <b>EMERGENT_LLM_KEY</b> to the backend environment, then redeploy the backend.</span></div>
+                <div className="mx-5 mt-4 flex gap-2 rounded-xl border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200"><AlertCircle size={14} className="shrink-0 mt-0.5" /><span>Add <b>GEMINI_API_KEY</b> to the backend environment, then redeploy the backend.</span></div>
               )}
 
               <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-4" data-testid="ai-buddy-messages">
