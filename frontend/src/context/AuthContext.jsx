@@ -7,28 +7,25 @@ export function AuthProvider({ children }) {
   // null = loading, false = logged out, object = logged in
   const [user, setUser] = useState(null);
 
-  // ✅ Fetch current user using token
   const fetchMe = useCallback(async () => {
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
+      return data;
     } catch {
       setUser(false);
+      return false;
     }
   }, []);
 
   useEffect(() => {
+    const hasSessionId = new URLSearchParams(window.location.hash.replace(/^#/, "")).has("session_id");
     const token = localStorage.getItem("token");
-    const hasSessionId = window.location.hash.includes("session_id=");
+
+    if (hasSessionId) return;
 
     if (!token || token === "undefined" || token === "null") {
-      if (token === "undefined" || token === "null") {
-        localStorage.removeItem("token");
-      }
-      if (hasSessionId) {
-        // Wait for GoogleCallbackHandler to exchange session_id for a token
-        return;
-      }
+      localStorage.removeItem("token");
       setUser(false);
       return;
     }
@@ -36,61 +33,36 @@ export function AuthProvider({ children }) {
     fetchMe();
   }, [fetchMe]);
 
-  // ✅ REGISTER
   const register = async (email, password) => {
     try {
-      const { data } = await api.post("/auth/register", { email, password });
-
-      // If backend later returns token → handle it
-      if (data.access_token) {
-        localStorage.setItem("token", data.access_token);
-        await fetchMe();
-        window.location.href = "/app";
-      }
-
+      const { data } = await api.post("/auth/register", { email: email.trim(), password });
+      if (!data.access_token) throw new Error("Account created but no session was returned.");
+      localStorage.setItem("token", data.access_token);
+      await fetchMe();
       return { ok: true };
     } catch (e) {
-      return {
-        ok: false,
-        error: formatApiErrorDetail(e.response?.data?.detail) || e.message
-      };
+      return { ok: false, error: formatApiErrorDetail(e.response?.data?.detail) || e.message };
     }
   };
 
-  // ✅ LOGIN (FIXED)
   const login = async (email, password) => {
     try {
-      const { data } = await api.post("/auth/login", { email, password });
-
-      // 🔥 CRITICAL FIX
+      const { data } = await api.post("/auth/login", { email: email.trim(), password });
+      if (!data.access_token) throw new Error("Login succeeded but no access token was returned.");
       localStorage.setItem("token", data.access_token);
-
-      // Fetch real user
       await fetchMe();
-
-      // Redirect to dashboard
-      window.location.href = "/app";
-
       return { ok: true };
     } catch (e) {
-      return {
-        ok: false,
-        error: formatApiErrorDetail(e.response?.data?.detail) || e.message
-      };
+      localStorage.removeItem("token");
+      return { ok: false, error: formatApiErrorDetail(e.response?.data?.detail) || e.message };
     }
   };
 
-  // ✅ LOGOUT
   const logout = async () => {
-    try {
-      await api.post("/auth/logout");
-    } catch {
-      // ignore
-    }
-
+    try { await api.post("/auth/logout"); } catch { /* local logout still succeeds */ }
     localStorage.removeItem("token");
     setUser(false);
-    window.location.href = "/";
+    window.location.assign("/");
   };
 
   return (
