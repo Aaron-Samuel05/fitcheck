@@ -1,4 +1,5 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "buildCommand": "cd frontend && npm run build",
   "installCommand": "cd frontend && npm install",
@@ -8,9 +9,6 @@
       "maxDuration": 60
     }
   },
-  "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index.py" }
-  ],
   "headers": [
     {
       "source": "/static/(.*)",
