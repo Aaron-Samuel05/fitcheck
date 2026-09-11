@@ -12,6 +12,7 @@ import Footer from "@/components/Footer";
 import AIBuddyWidget from "@/components/AIBuddyWidget";
 import ProfileWidget from "@/components/ProfileWidget";
 import GoogleCallbackHandler from "@/components/GoogleCallbackHandler";
+import BillingReturnHandler from "@/components/BillingReturnHandler";
 import Dashboard from "@/pages/Dashboard";
 import { Toaster } from "sonner";
 
@@ -38,6 +39,7 @@ function DashboardPage() {
       <AIBuddyWidget />
       <ProfileWidget />
       <GoogleCallbackHandler />
+      <BillingReturnHandler />
     </>
   );
 }
