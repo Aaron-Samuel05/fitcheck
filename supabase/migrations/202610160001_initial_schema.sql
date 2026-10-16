@@ -86,3 +86,46 @@ drop policy if exists "Users can delete own chat messages" on public.chat_messag
 create policy "Users can delete own chat messages" on public.chat_messages for delete to authenticated using (user_id = auth.uid());
 
 -- No client-facing policy is intentionally created for Stripe events.
+
+-- Create a profile automatically for each Supabase Auth identity.
+create or replace function public.handle_new_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.profiles (id, email, name)
+  values (
+    new.id,
+    coalesce(new.email, ''),
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name', '')
+  )
+  on conflict (id) do update set email = excluded.email;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created_fitcheck on auth.users;
+create trigger on_auth_user_created_fitcheck
+after insert on auth.users
+for each row execute procedure public.handle_new_auth_user();
+
+create or replace function public.handle_auth_user_email_update()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.email is distinct from old.email then
+    update public.profiles set email = coalesce(new.email, ''), updated_at = now() where id = new.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_email_updated_fitcheck on auth.users;
+create trigger on_auth_user_email_updated_fitcheck
+after update of email on auth.users
+for each row execute procedure public.handle_auth_user_email_update();
