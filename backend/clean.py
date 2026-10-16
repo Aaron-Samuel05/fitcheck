@@ -211,7 +211,10 @@ async def health():
 async def google_login(request: Request):
     if not os.environ.get("GOOGLE_CLIENT_ID") or not os.environ.get("GOOGLE_CLIENT_SECRET"):
         raise HTTPException(503, "Google authentication is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.")
-    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "").strip() or str(request.url_for("google_callback"))
+    # Prefer the canonical FitCheck domain over request.url_for(): behind Vercel's
+    # proxy, the incoming host/scheme can differ from the OAuth URI registered in Google.
+    # Keep GOOGLE_REDIRECT_URI as the explicit override for custom domains/environments.
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "").strip() or f"{FRONTEND_URL}/api/auth/google/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
